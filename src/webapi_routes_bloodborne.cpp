@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "webapi_routes_bloodborne.h"
 
+#include <cstdlib>
 #include <memory>
 #include <optional>
 
@@ -72,10 +73,23 @@ qint64 Integer(const QJsonObject& object, const QString& key, qint64 fallback = 
     return value.isDouble() ? value.toVariant().toLongLong() : fallback;
 }
 
+bool EnvEnabled(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr && value[0] != '\0' && QString::fromUtf8(value).trimmed() != "0";
+}
+
 } // namespace
 
-void RegisterBloodborneRoutes(QHttpServer& http) {
-    auto broker = std::make_shared<Bloodborne::SummonBroker>();
+void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
+    seamlessCoop = seamlessCoop || EnvEnabled("SHADNET_BLOODBORNE_SEAMLESS_COOP");
+    Bloodborne::SummonBroker::Options options;
+    options.seamlessCoop = seamlessCoop;
+    auto broker = std::make_shared<Bloodborne::SummonBroker>(options);
+
+    qInfo() << "Bloodborne summon routes registered; seamless co-op"
+            << (broker->IsSeamlessCoopEnabled() ? "enabled" : "disabled")
+            << "anywhere summons"
+            << (broker->IsSeamlessAnywhereSummonsEnabled() ? "enabled" : "disabled");
 
     http.route("/summon_messenger/create", QHttpServerRequest::Method::Post,
                [broker](const QHttpServerRequest& request) -> QHttpServerResponse {
@@ -122,9 +136,10 @@ void RegisterBloodborneRoutes(QHttpServer& http) {
                    if (!body) {
                        return InvalidRequest(QStringLiteral("Invalid summon removal"));
                    }
-                   qInfo() << "Bloodborne summon: consumed"
-                       << broker->Consume(*body, QDateTime::currentMSecsSinceEpoch())
-                           << "advertisement(s)";
+                   const auto result =
+                       broker->Consume(*body, QDateTime::currentMSecsSinceEpoch());
+                   qInfo() << "Bloodborne summon: consumed" << result.consumed
+                           << "retained" << result.retained << "advertisement(s)";
                    return SummonResponse(QStringLiteral("SummonDataRemoveResponse"));
                });
 

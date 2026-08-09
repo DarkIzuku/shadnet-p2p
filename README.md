@@ -74,12 +74,23 @@ UnsecuredPort=31313
 Matching2Enabled=true
 MatchingUdpPort=31314
 WebApiPort=31315
+BloodborneSeamlessCoop=false
 ```
 
 shadPS4 currently derives the STUN port as `UnsecuredPort + 1`, so keep
 `MatchingUdpPort` at `31314` when using the default TCP port. Configure the
 emulator's shadNet server as `<server-host>:31313` and its WebAPI server as
 `http://<server-host>:31315`.
+
+Set `BloodborneSeamlessCoop=true` or `SHADNET_BLOODBORNE_SEAMLESS_COOP=1` to
+keep active Bloodborne summon pairings alive when the game sends ordinary
+summon removal requests during boss kills, deaths, or area transitions. Seamless
+mode also relaxes Bloodborne's area, distance, and level filters: remote signs
+are returned with the searching host's area/position fields, and the host's
+claim response carries the original `HostData` plus a `SeamlessWarp` location
+payload for the shadPS4 seamless layer. shadPS4 consumes that metadata before
+Bloodborne sees the response; a native game warp/travel hook is still the next
+separate milestone for full seamless map travel.
 
 For another machine to connect, bind `Host` to a reachable interface (for
 example `0.0.0.0`) and allow TCP `31313`, UDP `31314`, and TCP `31315` through
