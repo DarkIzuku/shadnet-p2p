@@ -6,6 +6,6 @@ class QHttpServer;
 
 namespace WebApiRoutes {
 
-void RegisterBloodborneRoutes(QHttpServer& http);
+void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop);
 
 } // namespace WebApiRoutes

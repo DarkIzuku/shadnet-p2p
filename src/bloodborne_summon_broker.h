@@ -18,6 +18,13 @@ public:
     enum class State { Advertised, Claimed, Delivered, Consumed };
     enum class ClaimStatus { Claimed, AlreadyClaimed, NotFound, Conflict };
 
+    struct Options {
+        qint64 ttlMs = 130'000;
+        qint64 seamlessTtlMs = 15 * 60 * 1000;
+        bool seamlessCoop = false;
+        bool seamlessAnywhereSummons = false;
+    };
+
     struct AdvertiseResult {
         State state = State::Advertised;
         QByteArray pendingClaim;
@@ -29,15 +36,24 @@ public:
         qint64 targetUserId = -1;
     };
 
-    explicit SummonBroker(qint64 ttlMs = 130'000);
+    struct ConsumeResult {
+        int consumed = 0;
+        int retained = 0;
+    };
+
+    SummonBroker();
+    explicit SummonBroker(qint64 ttlMs);
+    explicit SummonBroker(Options options);
 
     AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs);
     QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs);
     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs);
-    int Consume(const QJsonObject& request, qint64 nowMs);
+    ConsumeResult Consume(const QJsonObject& request, qint64 nowMs);
 
     std::optional<State> StateFor(const QString& sessionId, qint64 userId, qint64 nowMs);
     int Size(qint64 nowMs);
+    bool IsSeamlessCoopEnabled() const;
+    bool IsSeamlessAnywhereSummonsEnabled() const;
 
 private:
     struct Record {
@@ -52,8 +68,12 @@ private:
     void PurgeExpiredLocked(qint64 nowMs);
 
     qint64 m_ttlMs;
+    qint64 m_seamlessTtlMs;
+    bool m_seamlessCoop;
+    bool m_seamlessAnywhereSummons;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
+    QHash<qint64, QJsonObject> m_lastSearchByUser;
 };
 
 bool HasRequiredAdvertisementFields(const QJsonObject& body);
