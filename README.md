@@ -62,6 +62,31 @@ On first start the server writes a `shadnet.cfg` (INI format) next to the
 binary and listens on the configured ports (defaults: TCP `31313` for the game
 protocol, UDP `31314` for matchmaking/STUN, TCP `31315` for the WebAPI).
 
+### Matching2 / P2P
+
+New configurations enable Matching2 by default. Verify these values in
+`shadnet.cfg` before connecting shadPS4:
+
+```ini
+[General]
+Host=127.0.0.1
+UnsecuredPort=31313
+Matching2Enabled=true
+MatchingUdpPort=31314
+WebApiPort=31315
+```
+
+shadPS4 currently derives the STUN port as `UnsecuredPort + 1`, so keep
+`MatchingUdpPort` at `31314` when using the default TCP port. Configure the
+emulator's shadNet server as `<server-host>:31313` and its WebAPI server as
+`http://<server-host>:31315`.
+
+For another machine to connect, bind `Host` to a reachable interface (for
+example `0.0.0.0`) and allow TCP `31313`, UDP `31314`, and TCP `31315` through
+the host firewall. The game protocol is unencrypted; prefer a trusted LAN or
+VPN, and set `RegistrationSecretKey` before exposing registration outside the
+local machine. TCP `31320` is only needed for the optional public stats page.
+
 ## Creating an account
 
 shadNet is a **server**, so there is no web signup page or `curl` endpoint

@@ -1,0 +1,407 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "bloodborne_summon_broker.h"
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include <QJsonArray>
+#include <QJsonValue>
+#include <QMutexLocker>
+#include <QSet>
+
+namespace Bloodborne {
+namespace {
+
+qint64 Integer(const QJsonObject& object, const QString& key, qint64 fallback = 0) {
+    const QJsonValue value = object.value(key);
+    return value.isDouble() ? value.toVariant().toLongLong() : fallback;
+}
+
+std::optional<qint64> OptionalInteger(const QJsonObject& object, const QString& key) {
+    const QJsonValue value = object.value(key);
+    if (!value.isDouble()) {
+        return std::nullopt;
+    }
+    return value.toVariant().toLongLong();
+}
+
+QString RecordKey(const QString& sessionId, qint64 userId) {
+    return sessionId + QLatin1Char(':') + QString::number(userId);
+}
+
+QString RecordKey(const QJsonObject& advertisement) {
+    return RecordKey(advertisement.value(QStringLiteral("SessionId")).toString(),
+                     Integer(advertisement, QStringLiteral("UserId"), -1));
+}
+
+bool SameIfPresent(const QJsonObject& request, const QJsonObject& sign, const QString& key) {
+    const QJsonValue expected = request.value(key);
+    return expected.isUndefined() || expected.isNull() || expected == sign.value(key);
+}
+
+bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign) {
+    const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
+    const QString requesterSession = request.value(QStringLiteral("SessionId")).toString();
+    if (Integer(sign, QStringLiteral("UserId"), -1) == requester ||
+        sign.value(QStringLiteral("SessionId")).toString() == requesterSession) {
+        return false;
+    }
+    if (!SameIfPresent(request, sign, QStringLiteral("AreaId")) ||
+        !SameIfPresent(request, sign, QStringLiteral("AreaRegionId")) ||
+        !SameIfPresent(request, sign, QStringLiteral("ChannelId")) ||
+        !SameIfPresent(request, sign, QStringLiteral("SummonDataVersion")) ||
+        !SameIfPresent(request, sign, QStringLiteral("SummonMethod"))) {
+        return false;
+    }
+
+    QSet<int> summonTypes;
+    for (const QJsonValue& value : request.value(QStringLiteral("SummonTypeList")).toArray()) {
+        const QJsonObject filter = value.toObject();
+        if (filter.contains(QStringLiteral("SummonType"))) {
+            summonTypes.insert(static_cast<int>(Integer(filter, QStringLiteral("SummonType"))));
+        }
+    }
+    if (!summonTypes.isEmpty() &&
+        !summonTypes.contains(static_cast<int>(Integer(sign, QStringLiteral("SummonType"))))) {
+        return false;
+    }
+
+    const QString requestWord = request.value(QStringLiteral("SummonWord")).toString();
+    const QString signWord = sign.value(QStringLiteral("SummonWord")).toString();
+    if (!requestWord.isEmpty() && requestWord != signWord) {
+        return false;
+    }
+
+    const qint64 requestLevel = Integer(request, QStringLiteral("MatchingLevel"), -1);
+    const qint64 signLevel = Integer(sign, QStringLiteral("MatchingLevel"), -1);
+    if (requestWord.isEmpty() && requestLevel >= 0 && signLevel >= 0) {
+        const qint64 levelRange = 10 + requestLevel / 5;
+        if (std::abs(requestLevel - signLevel) > levelRange) {
+            return false;
+        }
+    }
+
+    const qint64 distance = Integer(request, QStringLiteral("DistanceThreshold"), -1);
+    if (distance >= 0 && request.contains(QStringLiteral("PosX")) &&
+        request.contains(QStringLiteral("PosY")) && request.contains(QStringLiteral("PosZ"))) {
+        const qint64 deltaX =
+            Integer(request, QStringLiteral("PosX")) - Integer(sign, QStringLiteral("PosX"));
+        const qint64 deltaY =
+            Integer(request, QStringLiteral("PosY")) - Integer(sign, QStringLiteral("PosY"));
+        const qint64 deltaZ =
+            Integer(request, QStringLiteral("PosZ")) - Integer(sign, QStringLiteral("PosZ"));
+        if (deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ > distance * distance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QList<QByteArray> TopLevelMembersExceptEnvelope(const QByteArray& rawObject) {
+    const QByteArray raw = rawObject.trimmed();
+    QList<QByteArray> members;
+    if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') {
+        return members;
+    }
+
+    int position = 1;
+    const int end = raw.size() - 1;
+    while (position < end) {
+        while (position < end &&
+               (raw[position] == ',' || raw[position] == ' ' || raw[position] == '\t' ||
+                raw[position] == '\r' || raw[position] == '\n')) {
+            ++position;
+        }
+        if (position >= end) {
+            break;
+        }
+
+        const int memberStart = position;
+        if (raw[position] != '"') {
+            return {};
+        }
+        const int keyStart = ++position;
+        bool escaped = false;
+        while (position < end) {
+            const char current = raw[position];
+            if (!escaped && current == '"') {
+                break;
+            }
+            escaped = !escaped && current == '\\';
+            if (current != '\\') {
+                escaped = false;
+            }
+            ++position;
+        }
+        if (position >= end) {
+            return {};
+        }
+        const QByteArray key = raw.mid(keyStart, position - keyStart);
+        ++position;
+        while (position < end &&
+               (raw[position] == ' ' || raw[position] == '\t' || raw[position] == '\r' ||
+                raw[position] == '\n')) {
+            ++position;
+        }
+        if (position >= end || raw[position] != ':') {
+            return {};
+        }
+        ++position;
+
+        bool inString = false;
+        escaped = false;
+        int objectDepth = 0;
+        int arrayDepth = 0;
+        while (position < end) {
+            const char current = raw[position];
+            if (inString) {
+                if (!escaped && current == '"') {
+                    inString = false;
+                }
+                escaped = !escaped && current == '\\';
+                if (current != '\\') {
+                    escaped = false;
+                }
+            } else {
+                if (current == '"') {
+                    inString = true;
+                    escaped = false;
+                } else if (current == '{') {
+                    ++objectDepth;
+                } else if (current == '}') {
+                    --objectDepth;
+                } else if (current == '[') {
+                    ++arrayDepth;
+                } else if (current == ']') {
+                    --arrayDepth;
+                } else if (current == ',' && objectDepth == 0 && arrayDepth == 0) {
+                    break;
+                }
+            }
+            ++position;
+        }
+
+        int memberEnd = position;
+        while (memberEnd > memberStart &&
+               (raw[memberEnd - 1] == ' ' || raw[memberEnd - 1] == '\t' ||
+                raw[memberEnd - 1] == '\r' || raw[memberEnd - 1] == '\n')) {
+            --memberEnd;
+        }
+        if (key != "MessageId" && key != "ResKind") {
+            members.append(raw.mid(memberStart, memberEnd - memberStart));
+        }
+    }
+    return members;
+}
+
+} // namespace
+
+SummonBroker::SummonBroker(qint64 ttlMs) : m_ttlMs(ttlMs) {}
+
+SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
+                                                       const QByteArray& rawBody, qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+
+    const QString key = RecordKey(body);
+    auto it = m_records.find(key);
+    if (it == m_records.end() || it->state == State::Consumed) {
+        Record record;
+        record.state = State::Advertised;
+        record.advertisement = body;
+        record.rawAdvertisement = rawBody;
+        record.updatedAtMs = nowMs;
+        m_records.insert(key, std::move(record));
+        return {State::Advertised, {}};
+    }
+
+    it->advertisement = body;
+    it->rawAdvertisement = rawBody;
+    it->updatedAtMs = nowMs;
+    if (it->state == State::Claimed) {
+        it->state = State::Delivered;
+    }
+    if (it->state == State::Delivered) {
+        return {State::Delivered, it->rawClaim};
+    }
+    return {it->state, {}};
+}
+
+QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+
+    struct Candidate {
+        qint64 updatedAtMs;
+        QByteArray rawAdvertisement;
+    };
+    std::vector<Candidate> candidates;
+    for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
+        if (it->state == State::Advertised && MatchesSearch(request, it->advertisement)) {
+            candidates.push_back({it->updatedAtMs, it->rawAdvertisement});
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& left,
+                                                       const Candidate& right) {
+        return left.updatedAtMs > right.updatedAtMs;
+    });
+
+    const int maxCount =
+        std::max(0, static_cast<int>(Integer(request, QStringLiteral("GetMaxCount"), 20)));
+    QList<QByteArray> results;
+    for (const Candidate& candidate : candidates) {
+        if (results.size() >= maxCount) {
+            break;
+        }
+        results.append(candidate.rawAdvertisement);
+    }
+    return results;
+}
+
+SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
+                                               const QByteArray& rawRequest, qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+
+    const QString requestedSession = request.value(QStringLiteral("SessionId")).toString();
+    const std::optional<qint64> targetUser =
+        OptionalInteger(request, QStringLiteral("TargetUserId"));
+    const QJsonValue targetChara = request.value(QStringLiteral("TargetCharaId"));
+
+    auto target = m_records.end();
+    if (!requestedSession.isEmpty()) {
+        for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+            if (it->advertisement.value(QStringLiteral("SessionId")).toString() ==
+                requestedSession) {
+                target = it;
+                break;
+            }
+        }
+    }
+    if (target == m_records.end() && targetUser.has_value()) {
+        for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+            if (Integer(it->advertisement, QStringLiteral("UserId"), -1) != *targetUser) {
+                continue;
+            }
+            if (!targetChara.isUndefined() && !targetChara.isNull() &&
+                it->advertisement.value(QStringLiteral("CharaId")) != targetChara) {
+                continue;
+            }
+            if (target == m_records.end() || it->updatedAtMs > target->updatedAtMs) {
+                target = it;
+            }
+        }
+    }
+    if (target == m_records.end() || target->state == State::Consumed) {
+        return {ClaimStatus::NotFound, {}, -1};
+    }
+
+    ClaimResult result;
+    result.targetSessionId =
+        target->advertisement.value(QStringLiteral("SessionId")).toString();
+    result.targetUserId = Integer(target->advertisement, QStringLiteral("UserId"), -1);
+    if (target->state == State::Claimed || target->state == State::Delivered) {
+        result.status = target->claim == request ? ClaimStatus::AlreadyClaimed
+                                                 : ClaimStatus::Conflict;
+        return result;
+    }
+
+    target->state = State::Claimed;
+    target->claim = request;
+    target->rawClaim = rawRequest;
+    target->updatedAtMs = nowMs;
+    result.status = ClaimStatus::Claimed;
+    return result;
+}
+
+int SummonBroker::Consume(const QJsonObject& request, qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+
+    const QString sessionId = request.value(QStringLiteral("SessionId")).toString();
+    const std::optional<qint64> userId = OptionalInteger(request, QStringLiteral("UserId"));
+    if (sessionId.isEmpty() && !userId.has_value()) {
+        return 0;
+    }
+
+    int consumed = 0;
+    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+        const bool sessionMatches =
+            sessionId.isEmpty() ||
+            it->advertisement.value(QStringLiteral("SessionId")).toString() == sessionId;
+        const bool userMatches =
+            !userId.has_value() ||
+            Integer(it->advertisement, QStringLiteral("UserId"), -1) == *userId;
+        if (sessionMatches && userMatches && it->state != State::Consumed) {
+            it->state = State::Consumed;
+            it->updatedAtMs = nowMs;
+            ++consumed;
+        }
+    }
+    return consumed;
+}
+
+std::optional<SummonBroker::State> SummonBroker::StateFor(const QString& sessionId,
+                                                           qint64 userId, qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+    const auto it = m_records.constFind(RecordKey(sessionId, userId));
+    if (it == m_records.cend()) {
+        return std::nullopt;
+    }
+    return it->state;
+}
+
+int SummonBroker::Size(qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+    return m_records.size();
+}
+
+void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
+    for (auto it = m_records.begin(); it != m_records.end();) {
+        if (nowMs - it->updatedAtMs > m_ttlMs) {
+            it = m_records.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool HasRequiredAdvertisementFields(const QJsonObject& body) {
+    static const QSet<QString> required = {
+        QStringLiteral("SessionId"),         QStringLiteral("UserId"),
+        QStringLiteral("AreaId"),            QStringLiteral("AreaRegionId"),
+        QStringLiteral("SummonData"),        QStringLiteral("SummonDataVersion"),
+        QStringLiteral("SummonType"),        QStringLiteral("MatchingLevel"),
+    };
+    for (const QString& key : required) {
+        if (!body.contains(key) || body.value(key).isNull()) {
+            return false;
+        }
+    }
+    return !body.value(QStringLiteral("SessionId")).toString().isEmpty() &&
+           !body.value(QStringLiteral("SummonData")).toString().isEmpty();
+}
+
+QByteArray BuildClaimDeliveryResponse(const QByteArray& rawClaim) {
+    const QList<QByteArray> members = TopLevelMembersExceptEnvelope(rawClaim);
+    if (members.isEmpty()) {
+        return {};
+    }
+
+    // Keep game-owned 64-bit identifiers byte-for-byte instead of round-tripping through
+    // QJsonValue's double representation.
+    QByteArray response =
+        "{\"ResKind\":0,\"MessageId\":\"SummonDataCreateResponse\"";
+    for (const QByteArray& member : members) {
+        response.append(',');
+        response.append(member);
+    }
+    response.append('}');
+    return response;
+}
+
+} // namespace Bloodborne
