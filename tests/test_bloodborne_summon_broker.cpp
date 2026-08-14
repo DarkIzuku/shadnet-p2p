@@ -190,18 +190,11 @@ int main() {
     const auto remoteDelivery = anywhere.Advertise(Parse(remoteAdvertisement), remoteAdvertisement,
                                                    9'030);
     CHECK(remoteDelivery.state == Bloodborne::SummonBroker::State::Delivered);
+    CHECK(remoteDelivery.pendingClaim == remoteClaim);
     const QByteArray remoteDeliveryResponse =
         Bloodborne::BuildClaimDeliveryResponse(remoteDelivery.pendingClaim);
     CHECK(remoteDeliveryResponse.contains("\"HostData\":\"remote-host-owned-data\""));
-    CHECK(remoteDeliveryResponse.contains("\"SeamlessWarp\""));
-    CHECK(remoteDeliveryResponse.contains("\"AreaId\":385875968"));
-    CHECK(remoteDeliveryResponse.contains("\"AreaRegionId\":230100"));
-    CHECK(remoteDeliveryResponse.contains("\"ChannelId\":0"));
-    CHECK(remoteDeliveryResponse.contains("\"HostSessionId\":\"host-session\""));
-    CHECK(remoteDeliveryResponse.contains("\"HostUserId\":2466"));
-    CHECK(remoteDeliveryResponse.contains("\"PosX\":143"));
-    CHECK(remoteDeliveryResponse.contains("\"PosY\":-116"));
-    CHECK(remoteDeliveryResponse.contains("\"PosZ\":-87"));
+    CHECK(!remoteDeliveryResponse.contains("\"SeamlessWarp\""));
 
     std::cout << "Bloodborne summon broker state test passed\n";
     return 0;

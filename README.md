@@ -86,11 +86,10 @@ Set `BloodborneSeamlessCoop=true` or `SHADNET_BLOODBORNE_SEAMLESS_COOP=1` to
 keep active Bloodborne summon pairings alive when the game sends ordinary
 summon removal requests during boss kills, deaths, or area transitions. Seamless
 mode also relaxes Bloodborne's area, distance, and level filters: remote signs
-are returned with the searching host's area/position fields, and the host's
-claim response carries the original `HostData` plus a `SeamlessWarp` location
-payload for the shadPS4 seamless layer. shadPS4 consumes that metadata before
-Bloodborne sees the response; a native game warp/travel hook is still the next
-separate milestone for full seamless map travel.
+are returned with the searching host's area/position fields. Claim delivery
+remains the game's original payload. Warp and travel are deliberately handled
+through Bloodborne's native multiplayer functions rather than private shadNet
+response fields or emulator-side gameplay logic.
 
 For another machine to connect, bind `Host` to a reachable interface (for
 example `0.0.0.0`) and allow TCP `31313`, UDP `31314`, and TCP `31315` through

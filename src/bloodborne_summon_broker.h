@@ -73,7 +73,6 @@ private:
     bool m_seamlessAnywhereSummons;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
-    QHash<qint64, QJsonObject> m_lastSearchByUser;
 };
 
 bool HasRequiredAdvertisementFields(const QJsonObject& body);
