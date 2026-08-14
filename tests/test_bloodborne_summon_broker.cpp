@@ -61,6 +61,32 @@ int main() {
     CHECK(found.size() == 1);
     CHECK(found.front() == advertisement);
 
+    QByteArray summonPayload(0xE0, '\0');
+    QByteArray binaryAdvertisementRaw = advertisement;
+    binaryAdvertisementRaw.replace("opaque-game-data", summonPayload.toBase64());
+    QJsonObject binaryAdvertisement = Parse(binaryAdvertisementRaw);
+    Bloodborne::SummonBroker binaryBroker(1'000);
+    CHECK(binaryBroker.Advertise(binaryAdvertisement, binaryAdvertisementRaw, 100).state ==
+          Bloodborne::SummonBroker::State::Advertised);
+    QList<QByteArray> binaryFound = binaryBroker.Search(Parse(search), 110);
+    CHECK(binaryFound.size() == 1);
+    QByteArray returnedPayload = QByteArray::fromBase64(
+        Parse(binaryFound.front()).value(QStringLiteral("SummonData")).toString().toLatin1());
+    CHECK(returnedPayload.size() == summonPayload.size());
+    CHECK(static_cast<unsigned char>(returnedPayload[0x79]) == 1);
+    CHECK(static_cast<unsigned char>(summonPayload[0x79]) == 0);
+    CHECK(binaryFound.front().contains("\"CharaId\":9223372036854775808"));
+
+    summonPayload[0x79] = 3;
+    binaryAdvertisementRaw = advertisement;
+    binaryAdvertisementRaw.replace("opaque-game-data", summonPayload.toBase64());
+    binaryAdvertisement = Parse(binaryAdvertisementRaw);
+    CHECK(binaryBroker.Advertise(binaryAdvertisement, binaryAdvertisementRaw, 120).state ==
+          Bloodborne::SummonBroker::State::Advertised);
+    binaryFound = binaryBroker.Search(Parse(search), 121);
+    CHECK(binaryFound.size() == 1);
+    CHECK(binaryFound.front() == binaryAdvertisementRaw);
+
     const auto claimed = broker.Claim(Parse(claim), claim, 120);
     CHECK(claimed.status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
     CHECK(claimed.targetSessionId == QStringLiteral("guest-session"));

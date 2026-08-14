@@ -250,13 +250,35 @@ bool ShouldSpoofAdvertisementField(const QByteArray& key) {
            key == "MatchingLevel" || key == "PosX" || key == "PosY" || key == "PosZ";
 }
 
-QByteArray SpoofAdvertisementForSearch(const QByteArray& rawAdvertisement,
-                                       const QJsonObject& request) {
+std::optional<QString> SummonDataWithAvailableResult(const QJsonObject& advertisement) {
+    constexpr qsizetype PayloadSize = 0xE0;
+    constexpr qsizetype AvailableResultCountOffset = 0x79;
+    if (Integer(advertisement, QStringLiteral("SummonDataVersion"), -1) != 3) {
+        return std::nullopt;
+    }
+
+    const QByteArray encoded =
+        advertisement.value(QStringLiteral("SummonData")).toString().toLatin1();
+    QByteArray payload = QByteArray::fromBase64(encoded, QByteArray::AbortOnBase64DecodingErrors);
+    if (payload.size() != PayloadSize || payload[AvailableResultCountOffset] != 0) {
+        return std::nullopt;
+    }
+
+    // Bloodborne advertises this response-side count as zero. A search result represents one
+    // available candidate; the native manager consumes one while creating its pending record.
+    payload[AvailableResultCountOffset] = 1;
+    return QString::fromLatin1(payload.toBase64());
+}
+
+QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
+                                         const QJsonObject& advertisement,
+                                         const QJsonObject& request, bool spoofLocation) {
     const QList<TopLevelMember> members = TopLevelMembers(rawAdvertisement);
     if (members.isEmpty()) {
         return rawAdvertisement;
     }
 
+    const std::optional<QString> summonData = SummonDataWithAvailableResult(advertisement);
     QSet<QByteArray> emitted;
     QByteArray out;
     out.append('{');
@@ -276,23 +298,27 @@ QByteArray SpoofAdvertisementForSearch(const QByteArray& rawAdvertisement,
         emitted.insert(member.key);
         const QString key = QString::fromLatin1(member.key);
         const QJsonValue replacement = request.value(key);
-        if (ShouldSpoofAdvertisementField(member.key) && !replacement.isUndefined() &&
-            !replacement.isNull()) {
+        if (member.key == "SummonData" && summonData.has_value()) {
+            appendMember(BuildRawMember(member.key, *summonData));
+        } else if (spoofLocation && ShouldSpoofAdvertisementField(member.key) &&
+                   !replacement.isUndefined() && !replacement.isNull()) {
             appendMember(BuildRawMember(member.key, replacement));
         } else {
             appendMember(member.raw);
         }
     }
 
-    for (const QByteArray& key : {QByteArray("AreaId"), QByteArray("AreaRegionId"),
-                                  QByteArray("ChannelId"), QByteArray("MatchingLevel"),
-                                  QByteArray("PosX"), QByteArray("PosY"), QByteArray("PosZ")}) {
-        if (emitted.contains(key)) {
-            continue;
-        }
-        const QJsonValue replacement = request.value(QString::fromLatin1(key));
-        if (!replacement.isUndefined() && !replacement.isNull()) {
-            appendMember(BuildRawMember(key, replacement));
+    if (spoofLocation) {
+        for (const QByteArray& key : {QByteArray("AreaId"), QByteArray("AreaRegionId"),
+                                      QByteArray("ChannelId"), QByteArray("MatchingLevel"),
+                                      QByteArray("PosX"), QByteArray("PosY"), QByteArray("PosZ")}) {
+            if (emitted.contains(key)) {
+                continue;
+            }
+            const QJsonValue replacement = request.value(QString::fromLatin1(key));
+            if (!replacement.isUndefined() && !replacement.isNull()) {
+                appendMember(BuildRawMember(key, replacement));
+            }
         }
     }
     out.append('}');
@@ -356,17 +382,15 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs)
     for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
         if (it->state == State::Advertised &&
             MatchesSearch(request, it->advertisement, anywhereSummons)) {
-            candidates.push_back(
-                {it->updatedAtMs, anywhereSummons
-                                      ? SpoofAdvertisementForSearch(it->rawAdvertisement, request)
-                                      : it->rawAdvertisement});
+            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
+                                                       it->rawAdvertisement, it->advertisement,
+                                                       request, anywhereSummons)});
         } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
                    Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
                    MatchesSearch(request, it->advertisement, anywhereSummons)) {
-            candidates.push_back(
-                {it->updatedAtMs, anywhereSummons
-                                      ? SpoofAdvertisementForSearch(it->rawAdvertisement, request)
-                                      : it->rawAdvertisement});
+            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
+                                                       it->rawAdvertisement, it->advertisement,
+                                                       request, anywhereSummons)});
         }
     }
     std::sort(candidates.begin(), candidates.end(),
