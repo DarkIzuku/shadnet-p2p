@@ -404,7 +404,7 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
 }
 
 QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
-                                      const QByteArray& hostPlacement) {
+                                       const QByteArray& hostPlacement) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 

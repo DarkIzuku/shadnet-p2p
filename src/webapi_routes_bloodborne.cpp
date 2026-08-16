@@ -25,8 +25,7 @@ namespace {
 
 constexpr auto HostPlacementHeader = "X-ShadPS4-Bloodborne-Host-Placement";
 
-QHttpServerResponse SummonResponse(const QString& messageId,
-                                   const QByteArray& hostPlacement = {}) {
+QHttpServerResponse SummonResponse(const QString& messageId, const QByteArray& hostPlacement = {}) {
     QJsonObject body;
     body.insert(QStringLiteral("ResKind"), 0);
     body.insert(QStringLiteral("MessageId"), messageId);
