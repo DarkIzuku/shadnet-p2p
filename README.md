@@ -7,8 +7,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 This shadNet fork provides the account, matchmaking, signaling, and WebAPI
 services used by the matching [shadPS4 P2P fork](https://github.com/Wozzardman/shadp2p).
-This guide sets up a small private server for Bloodborne's traditional co-op:
-the host rings the Beckoning Bell and a guest rings the Small Resonant Bell.
+This guide sets up a small private server for Bloodborne's traditional or
+experimental seamless co-op. The host rings the Beckoning Bell and a guest
+rings the Small Resonant Bell in both modes.
 
 The simplest supported layout is one server and all players connected to the
 same Tailscale tailnet. Tailscale encrypts traffic between the PCs and removes
@@ -173,8 +174,62 @@ Leaving `RegistrationSecretKey` empty enables open registration. In that case,
 the final key argument is omitted from the registration command. Open
 registration is not recommended for an ongoing server.
 
-Traditional co-op requires `BloodborneSeamlessCoop=false`. Do not start the
-server with `SHADNET_BLOODBORNE_SEAMLESS_COOP=1` for this setup.
+## Choose a co-op mode
+
+The server and every shadPS4 client must use the same mode. Stop shadNet and all
+clients before changing it.
+
+### Traditional co-op
+
+Traditional mode keeps Bloodborne's normal area, boss, level, bell, death, and
+session restrictions. Set this in `build/shadnet.cfg`:
+
+```ini
+BloodborneSeamlessCoop=false
+```
+
+Also make sure `SHADNET_BLOODBORNE_SEAMLESS_COOP` is not set in the terminal or
+service that starts shadNet. On Linux:
+
+```bash
+unset SHADNET_BLOODBORNE_SEAMLESS_COOP
+./build/shadnet
+```
+
+Setting the configuration to `false` does not override an environment variable
+that is still set to `1`.
+
+### Experimental seamless co-op
+
+Seamless mode lets the broker match bells from different maps and carries the
+host's placement to the guest so the client can move the guest before the normal
+room join. The persistent and recommended server setting is:
+
+```ini
+BloodborneSeamlessCoop=true
+```
+
+Then restart shadNet normally:
+
+```bash
+./build/shadnet
+```
+
+For a temporary test without editing the file, start the server with:
+
+```bash
+SHADNET_BLOODBORNE_SEAMLESS_COOP=1 ./build/shadnet
+```
+
+The startup log must say `seamless co-op enabled` and `anywhere summons enabled`.
+Every player must also start QtLauncher or BBLauncher with
+`SHADPS4_BLOODBORNE_SEAMLESS_COOP=1`; the matching client README has commands
+for Linux, Windows, and macOS. The server trace variable is optional and is not
+needed for normal seamless play.
+
+Bell use and cross-map guest placement are working. Lantern travel after a
+co-op session is already established remains incomplete on the client side, so
+do not expect the group to travel together from an active session yet.
 
 ## 4. Start and test the server
 
@@ -272,7 +327,7 @@ folder:
 
 The client README lists the exact Linux, Windows, macOS, and portable paths.
 
-## 7. Play traditional co-op
+## 7. Play co-op
 
 1. Keep shadNet and Tailscale running.
 2. Have each player start the matching shadPS4 build and sign in with a unique
@@ -282,8 +337,14 @@ The client README lists the exact Linux, Windows, macOS, and portable paths.
 5. The world host rings the Beckoning Bell.
 6. The guest rings the Small Resonant Bell.
 
-This mode preserves Bloodborne's normal boss, area, level, bell, death, and
-session rules. Seamless co-op is a separate experimental mode.
+Traditional mode preserves Bloodborne's normal boss, area, level, bell, death,
+and session rules.
+
+In seamless mode, the host and guest may begin on different maps. Ring the
+host's Beckoning Bell first, then the guest's Small Resonant Bell, and leave both
+active while shadNet prepares the guest and the game completes its normal room
+join. If the host travels before discovery, wait until the host finishes loading
+before the guest rings. Established-session lantern travel is not yet supported.
 
 ## Troubleshooting
 
@@ -314,7 +375,10 @@ change a server running from `build/`.
   shadNet machine.
 - Check that every client has valid `host_overrides.json` content and can reach
   `/status`.
-- Use the same game version and a normally eligible Bloodborne area.
+- Use the same game version. Traditional mode also requires a normally eligible
+  Bloodborne area.
+- Confirm shadNet's startup line reports the intended seamless setting and that
+  every client was started in the same mode.
 
 ## Project status and credits
 

@@ -15,7 +15,7 @@ namespace Bloodborne {
 
 class SummonBroker {
 public:
-    enum class State { Advertised, Claimed, Delivered, Consumed };
+    enum class State { Advertised, Preparing, Claimed, Delivered, Consumed };
     enum class ClaimStatus { Claimed, AlreadyClaimed, NotFound, Conflict };
 
     struct Options {
@@ -28,6 +28,7 @@ public:
     struct AdvertiseResult {
         State state = State::Advertised;
         QByteArray pendingClaim;
+        QByteArray pendingHostPlacement;
     };
 
     struct ClaimResult {
@@ -39,6 +40,7 @@ public:
     struct ConsumeResult {
         int consumed = 0;
         int retained = 0;
+        QByteArray pendingHostPlacement;
     };
 
     SummonBroker();
@@ -46,8 +48,10 @@ public:
     explicit SummonBroker(Options options);
 
     AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs);
-    QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs);
-    ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs);
+    QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
+                             const QByteArray& hostPlacement = {});
+    ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
+                      const QByteArray& hostPlacement = {});
     ConsumeResult Consume(const QJsonObject& request, qint64 nowMs);
 
     std::optional<State> StateFor(const QString& sessionId, qint64 userId, qint64 nowMs);
@@ -62,6 +66,8 @@ private:
         QByteArray rawAdvertisement;
         QJsonObject claim;
         QByteArray rawClaim;
+        QByteArray hostPlacement;
+        qint64 preparationRequester = -1;
         qint64 updatedAtMs = 0;
     };
 
@@ -73,7 +79,6 @@ private:
     bool m_seamlessAnywhereSummons;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
-    QHash<qint64, QJsonObject> m_lastSearchByUser;
 };
 
 bool HasRequiredAdvertisementFields(const QJsonObject& body);

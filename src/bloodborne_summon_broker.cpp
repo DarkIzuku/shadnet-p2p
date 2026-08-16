@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include <QJsonArray>
@@ -14,6 +15,8 @@
 
 namespace Bloodborne {
 namespace {
+
+constexpr qsizetype MaxHostPlacementSize = 128;
 
 qint64 Integer(const QJsonObject& object, const QString& key, qint64 fallback = 0) {
     const QJsonValue value = object.value(key);
@@ -43,12 +46,31 @@ bool SameIfPresent(const QJsonObject& request, const QJsonObject& sign, const QS
 }
 
 bool IsSeamlessActiveState(SummonBroker::State state) {
-    return state == SummonBroker::State::Claimed || state == SummonBroker::State::Delivered;
+    return state == SummonBroker::State::Preparing || state == SummonBroker::State::Claimed ||
+           state == SummonBroker::State::Delivered;
 }
 
 bool ForceConsumeRequested(const QJsonObject& request) {
     return request.value(QStringLiteral("Force")).toBool(false) ||
            request.value(QStringLiteral("SeamlessLeave")).toBool(false);
+}
+
+std::optional<qint64> HostPlacementMap(const QByteArray& placement) {
+    constexpr qsizetype MapBegin = 2;
+    if (!placement.startsWith("1,")) {
+        return std::nullopt;
+    }
+    const qsizetype end = placement.indexOf(',', MapBegin);
+    if (end < 0) {
+        return std::nullopt;
+    }
+
+    bool ok = false;
+    const qulonglong packedMap = placement.mid(MapBegin, end - MapBegin).toULongLong(&ok, 16);
+    if (!ok || packedMap == 0 || packedMap > std::numeric_limits<quint32>::max()) {
+        return std::nullopt;
+    }
+    return static_cast<qint64>(packedMap);
 }
 
 bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool anywhereSummons) {
@@ -62,10 +84,9 @@ bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool any
         !SameIfPresent(request, sign, QStringLiteral("SummonMethod"))) {
         return false;
     }
-    if (!anywhereSummons &&
-        (!SameIfPresent(request, sign, QStringLiteral("AreaId")) ||
-         !SameIfPresent(request, sign, QStringLiteral("AreaRegionId")) ||
-         !SameIfPresent(request, sign, QStringLiteral("ChannelId")))) {
+    if (!anywhereSummons && (!SameIfPresent(request, sign, QStringLiteral("AreaId")) ||
+                             !SameIfPresent(request, sign, QStringLiteral("AreaRegionId")) ||
+                             !SameIfPresent(request, sign, QStringLiteral("ChannelId")))) {
         return false;
     }
 
@@ -158,9 +179,8 @@ QList<TopLevelMember> TopLevelMembers(const QByteArray& rawObject) {
         }
         const QByteArray key = raw.mid(keyStart, position - keyStart);
         ++position;
-        while (position < end &&
-               (raw[position] == ' ' || raw[position] == '\t' || raw[position] == '\r' ||
-                raw[position] == '\n')) {
+        while (position < end && (raw[position] == ' ' || raw[position] == '\t' ||
+                                  raw[position] == '\r' || raw[position] == '\n')) {
             ++position;
         }
         if (position >= end || raw[position] != ':') {
@@ -252,13 +272,35 @@ bool ShouldSpoofAdvertisementField(const QByteArray& key) {
            key == "MatchingLevel" || key == "PosX" || key == "PosY" || key == "PosZ";
 }
 
-QByteArray SpoofAdvertisementForSearch(const QByteArray& rawAdvertisement,
-                                       const QJsonObject& request) {
+std::optional<QString> SummonDataWithAvailableResult(const QJsonObject& advertisement) {
+    constexpr qsizetype PayloadSize = 0xE0;
+    constexpr qsizetype AvailableResultCountOffset = 0x79;
+    if (Integer(advertisement, QStringLiteral("SummonDataVersion"), -1) != 3) {
+        return std::nullopt;
+    }
+
+    const QByteArray encoded =
+        advertisement.value(QStringLiteral("SummonData")).toString().toLatin1();
+    QByteArray payload = QByteArray::fromBase64(encoded, QByteArray::AbortOnBase64DecodingErrors);
+    if (payload.size() != PayloadSize || payload[AvailableResultCountOffset] != 0) {
+        return std::nullopt;
+    }
+
+    // Bloodborne advertises this response-side count as zero. A search result represents one
+    // available candidate; the native manager consumes one while creating its pending record.
+    payload[AvailableResultCountOffset] = 1;
+    return QString::fromLatin1(payload.toBase64());
+}
+
+QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
+                                         const QJsonObject& advertisement,
+                                         const QJsonObject& request, bool spoofLocation) {
     const QList<TopLevelMember> members = TopLevelMembers(rawAdvertisement);
     if (members.isEmpty()) {
         return rawAdvertisement;
     }
 
+    const std::optional<QString> summonData = SummonDataWithAvailableResult(advertisement);
     QSet<QByteArray> emitted;
     QByteArray out;
     out.append('{');
@@ -278,96 +320,29 @@ QByteArray SpoofAdvertisementForSearch(const QByteArray& rawAdvertisement,
         emitted.insert(member.key);
         const QString key = QString::fromLatin1(member.key);
         const QJsonValue replacement = request.value(key);
-        if (ShouldSpoofAdvertisementField(member.key) && !replacement.isUndefined() &&
-            !replacement.isNull()) {
+        if (member.key == "SummonData" && summonData.has_value()) {
+            appendMember(BuildRawMember(member.key, *summonData));
+        } else if (spoofLocation && ShouldSpoofAdvertisementField(member.key) &&
+                   !replacement.isUndefined() && !replacement.isNull()) {
             appendMember(BuildRawMember(member.key, replacement));
         } else {
             appendMember(member.raw);
         }
     }
 
-    for (const QByteArray& key :
-         {QByteArray("AreaId"), QByteArray("AreaRegionId"), QByteArray("ChannelId"),
-          QByteArray("MatchingLevel"), QByteArray("PosX"), QByteArray("PosY"), QByteArray("PosZ")}) {
-        if (emitted.contains(key)) {
-            continue;
-        }
-        const QJsonValue replacement = request.value(QString::fromLatin1(key));
-        if (!replacement.isUndefined() && !replacement.isNull()) {
-            appendMember(BuildRawMember(key, replacement));
-        }
-    }
-    out.append('}');
-    return out;
-}
-
-QJsonObject BuildHostWarpLocation(const QJsonObject& claim, const QJsonObject* lastSearch) {
-    QJsonObject warp;
-    auto addValue = [&](const QString& outputKey, const QString& sourceKey) -> bool {
-        QJsonValue value = claim.value(sourceKey);
-        if ((value.isUndefined() || value.isNull()) && lastSearch != nullptr) {
-            value = lastSearch->value(sourceKey);
-        }
-        if (!value.isUndefined() && !value.isNull()) {
-            warp.insert(outputKey, value);
-            return true;
-        }
-        return false;
-    };
-
-    bool hasLocation = false;
-    hasLocation |= addValue(QStringLiteral("AreaId"), QStringLiteral("AreaId"));
-    hasLocation |= addValue(QStringLiteral("AreaRegionId"), QStringLiteral("AreaRegionId"));
-    addValue(QStringLiteral("ChannelId"), QStringLiteral("ChannelId"));
-    addValue(QStringLiteral("MatchingLevel"), QStringLiteral("MatchingLevel"));
-    hasLocation |= addValue(QStringLiteral("PosX"), QStringLiteral("PosX"));
-    hasLocation |= addValue(QStringLiteral("PosY"), QStringLiteral("PosY"));
-    hasLocation |= addValue(QStringLiteral("PosZ"), QStringLiteral("PosZ"));
-    if (!hasLocation) {
-        return {};
-    }
-
-    addValue(QStringLiteral("HostUserId"), QStringLiteral("UserId"));
-    if (lastSearch != nullptr) {
-        const QJsonValue session = lastSearch->value(QStringLiteral("SessionId"));
-        if (!session.isUndefined() && !session.isNull()) {
-            warp.insert(QStringLiteral("HostSessionId"), session);
+    if (spoofLocation) {
+        for (const QByteArray& key : {QByteArray("AreaId"), QByteArray("AreaRegionId"),
+                                      QByteArray("ChannelId"), QByteArray("MatchingLevel"),
+                                      QByteArray("PosX"), QByteArray("PosY"), QByteArray("PosZ")}) {
+            if (emitted.contains(key)) {
+                continue;
+            }
+            const QJsonValue replacement = request.value(QString::fromLatin1(key));
+            if (!replacement.isUndefined() && !replacement.isNull()) {
+                appendMember(BuildRawMember(key, replacement));
+            }
         }
     }
-    return warp;
-}
-
-QByteArray AddSeamlessWarpToClaim(const QByteArray& rawClaim, const QJsonObject& warp) {
-    if (warp.isEmpty()) {
-        return rawClaim;
-    }
-    const QList<TopLevelMember> members = TopLevelMembers(rawClaim);
-    if (members.isEmpty()) {
-        return rawClaim;
-    }
-
-    QByteArray out;
-    out.append('{');
-    bool first = true;
-    auto appendMember = [&](const QByteArray& rawMember) {
-        if (rawMember.isEmpty()) {
-            return;
-        }
-        if (!first) {
-            out.append(',');
-        }
-        out.append(rawMember);
-        first = false;
-    };
-
-    for (const TopLevelMember& member : members) {
-        if (member.key != "SeamlessWarp") {
-            appendMember(member.raw);
-        }
-    }
-    QByteArray warpMember = "\"SeamlessWarp\":";
-    warpMember.append(QJsonDocument(warp).toJson(QJsonDocument::Compact));
-    appendMember(warpMember);
     out.append('}');
     return out;
 }
@@ -377,8 +352,8 @@ QByteArray AddSeamlessWarpToClaim(const QByteArray& rawClaim, const QJsonObject&
 SummonBroker::SummonBroker() : SummonBroker(Options{}) {}
 
 SummonBroker::SummonBroker(qint64 ttlMs)
-    : m_ttlMs(std::max<qint64>(1, ttlMs)), m_seamlessTtlMs(15 * 60 * 1000),
-      m_seamlessCoop(false), m_seamlessAnywhereSummons(false) {}
+    : m_ttlMs(std::max<qint64>(1, ttlMs)), m_seamlessTtlMs(15 * 60 * 1000), m_seamlessCoop(false),
+      m_seamlessAnywhereSummons(false) {}
 
 SummonBroker::SummonBroker(Options options)
     : m_ttlMs(std::max<qint64>(1, options.ttlMs)),
@@ -387,7 +362,7 @@ SummonBroker::SummonBroker(Options options)
       m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop) {}
 
 SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
-                                                       const QByteArray& rawBody, qint64 nowMs) {
+                                                      const QByteArray& rawBody, qint64 nowMs) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -400,22 +375,36 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         record.rawAdvertisement = rawBody;
         record.updatedAtMs = nowMs;
         m_records.insert(key, std::move(record));
-        return {State::Advertised, {}};
+        return {State::Advertised, {}, {}};
     }
 
     it->advertisement = body;
     it->rawAdvertisement = rawBody;
     it->updatedAtMs = nowMs;
+    if (it->state == State::Preparing) {
+        const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
+        if (hostMap.has_value() && Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
+            return {State::Preparing, {}, it->hostPlacement};
+        }
+        it->state = State::Advertised;
+        it->preparationRequester = -1;
+    }
     if (it->state == State::Claimed) {
+        const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
+        if (m_seamlessCoop && hostMap.has_value() &&
+            Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
+            return {State::Claimed, {}, it->hostPlacement};
+        }
         it->state = State::Delivered;
     }
     if (it->state == State::Delivered) {
-        return {State::Delivered, it->rawClaim};
+        return {State::Delivered, it->rawClaim, it->hostPlacement};
     }
-    return {it->state, {}};
+    return {it->state, {}, {}};
 }
 
-QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs) {
+QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
+                                      const QByteArray& hostPlacement) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -426,29 +415,33 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs)
     std::vector<Candidate> candidates;
     const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
-    if (anywhereSummons && requester >= 0) {
-        m_lastSearchByUser[requester] = request;
-    }
-    for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
+    const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
+    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
         if (it->state == State::Advertised &&
             MatchesSearch(request, it->advertisement, anywhereSummons)) {
-            candidates.push_back(
-                {it->updatedAtMs, anywhereSummons
-                                      ? SpoofAdvertisementForSearch(it->rawAdvertisement, request)
-                                      : it->rawAdvertisement});
+            if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
+                Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
+                it->state = State::Preparing;
+                it->hostPlacement = hostPlacement;
+                it->preparationRequester = requester;
+                it->updatedAtMs = nowMs;
+                continue;
+            }
+            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
+                                                       it->rawAdvertisement, it->advertisement,
+                                                       request, anywhereSummons)});
         } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
                    Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
                    MatchesSearch(request, it->advertisement, anywhereSummons)) {
-            candidates.push_back(
-                {it->updatedAtMs, anywhereSummons
-                                      ? SpoofAdvertisementForSearch(it->rawAdvertisement, request)
-                                      : it->rawAdvertisement});
+            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
+                                                       it->rawAdvertisement, it->advertisement,
+                                                       request, anywhereSummons)});
         }
     }
-    std::sort(candidates.begin(), candidates.end(), [](const Candidate& left,
-                                                       const Candidate& right) {
-        return left.updatedAtMs > right.updatedAtMs;
-    });
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& left, const Candidate& right) {
+                  return left.updatedAtMs > right.updatedAtMs;
+              });
 
     const int maxCount =
         std::max(0, static_cast<int>(Integer(request, QStringLiteral("GetMaxCount"), 20)));
@@ -463,7 +456,8 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs)
 }
 
 SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
-                                               const QByteArray& rawRequest, qint64 nowMs) {
+                                              const QByteArray& rawRequest, qint64 nowMs,
+                                              const QByteArray& hostPlacement) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -501,26 +495,23 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
     }
 
     ClaimResult result;
-    result.targetSessionId =
-        target->advertisement.value(QStringLiteral("SessionId")).toString();
+    result.targetSessionId = target->advertisement.value(QStringLiteral("SessionId")).toString();
     result.targetUserId = Integer(target->advertisement, QStringLiteral("UserId"), -1);
     if (target->state == State::Claimed || target->state == State::Delivered) {
-        result.status = target->claim == request ? ClaimStatus::AlreadyClaimed
-                                                 : ClaimStatus::Conflict;
+        result.status =
+            target->claim == request ? ClaimStatus::AlreadyClaimed : ClaimStatus::Conflict;
         return result;
     }
 
     target->state = State::Claimed;
     target->claim = request;
     target->rawClaim = rawRequest;
-    if (m_seamlessCoop && m_seamlessAnywhereSummons) {
-        const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
-        const auto lastSearch = m_lastSearchByUser.constFind(requester);
-        const QJsonObject warp =
-            BuildHostWarpLocation(request, lastSearch == m_lastSearchByUser.constEnd()
-                                               ? nullptr
-                                               : &lastSearch.value());
-        target->rawClaim = AddSeamlessWarpToClaim(rawRequest, warp);
+    if (m_seamlessCoop && !hostPlacement.isEmpty() &&
+        hostPlacement.size() <= MaxHostPlacementSize && !hostPlacement.contains('\r') &&
+        !hostPlacement.contains('\n')) {
+        target->hostPlacement = hostPlacement;
+    } else {
+        target->hostPlacement.clear();
     }
     target->updatedAtMs = nowMs;
     result.status = ClaimStatus::Claimed;
@@ -550,6 +541,9 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
             it->updatedAtMs = nowMs;
             if (m_seamlessCoop && !forceConsume && IsSeamlessActiveState(it->state)) {
                 ++result.retained;
+                if (!it->hostPlacement.isEmpty()) {
+                    result.pendingHostPlacement = it->hostPlacement;
+                }
                 continue;
             }
             it->state = State::Consumed;
@@ -559,8 +553,8 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
     return result;
 }
 
-std::optional<SummonBroker::State> SummonBroker::StateFor(const QString& sessionId,
-                                                           qint64 userId, qint64 nowMs) {
+std::optional<SummonBroker::State> SummonBroker::StateFor(const QString& sessionId, qint64 userId,
+                                                          qint64 nowMs) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
     const auto it = m_records.constFind(RecordKey(sessionId, userId));
@@ -598,10 +592,10 @@ void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
 
 bool HasRequiredAdvertisementFields(const QJsonObject& body) {
     static const QSet<QString> required = {
-        QStringLiteral("SessionId"),         QStringLiteral("UserId"),
-        QStringLiteral("AreaId"),            QStringLiteral("AreaRegionId"),
-        QStringLiteral("SummonData"),        QStringLiteral("SummonDataVersion"),
-        QStringLiteral("SummonType"),        QStringLiteral("MatchingLevel"),
+        QStringLiteral("SessionId"),  QStringLiteral("UserId"),
+        QStringLiteral("AreaId"),     QStringLiteral("AreaRegionId"),
+        QStringLiteral("SummonData"), QStringLiteral("SummonDataVersion"),
+        QStringLiteral("SummonType"), QStringLiteral("MatchingLevel"),
     };
     for (const QString& key : required) {
         if (!body.contains(key) || body.value(key).isNull()) {
@@ -620,8 +614,7 @@ QByteArray BuildClaimDeliveryResponse(const QByteArray& rawClaim) {
 
     // Keep game-owned 64-bit identifiers byte-for-byte instead of round-tripping through
     // QJsonValue's double representation.
-    QByteArray response =
-        "{\"ResKind\":0,\"MessageId\":\"SummonDataCreateResponse\"";
+    QByteArray response = "{\"ResKind\":0,\"MessageId\":\"SummonDataCreateResponse\"";
     for (const QByteArray& member : members) {
         response.append(',');
         response.append(member);
