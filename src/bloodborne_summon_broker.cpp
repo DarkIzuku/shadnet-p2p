@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include <QJsonArray>
@@ -14,6 +15,8 @@
 
 namespace Bloodborne {
 namespace {
+
+constexpr qsizetype MaxHostPlacementSize = 128;
 
 qint64 Integer(const QJsonObject& object, const QString& key, qint64 fallback = 0) {
     const QJsonValue value = object.value(key);
@@ -43,12 +46,31 @@ bool SameIfPresent(const QJsonObject& request, const QJsonObject& sign, const QS
 }
 
 bool IsSeamlessActiveState(SummonBroker::State state) {
-    return state == SummonBroker::State::Claimed || state == SummonBroker::State::Delivered;
+    return state == SummonBroker::State::Preparing || state == SummonBroker::State::Claimed ||
+           state == SummonBroker::State::Delivered;
 }
 
 bool ForceConsumeRequested(const QJsonObject& request) {
     return request.value(QStringLiteral("Force")).toBool(false) ||
            request.value(QStringLiteral("SeamlessLeave")).toBool(false);
+}
+
+std::optional<qint64> HostPlacementMap(const QByteArray& placement) {
+    constexpr qsizetype MapBegin = 2;
+    if (!placement.startsWith("1,")) {
+        return std::nullopt;
+    }
+    const qsizetype end = placement.indexOf(',', MapBegin);
+    if (end < 0) {
+        return std::nullopt;
+    }
+
+    bool ok = false;
+    const qulonglong packedMap = placement.mid(MapBegin, end - MapBegin).toULongLong(&ok, 16);
+    if (!ok || packedMap == 0 || packedMap > std::numeric_limits<quint32>::max()) {
+        return std::nullopt;
+    }
+    return static_cast<qint64>(packedMap);
 }
 
 bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool anywhereSummons) {
@@ -353,22 +375,36 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         record.rawAdvertisement = rawBody;
         record.updatedAtMs = nowMs;
         m_records.insert(key, std::move(record));
-        return {State::Advertised, {}};
+        return {State::Advertised, {}, {}};
     }
 
     it->advertisement = body;
     it->rawAdvertisement = rawBody;
     it->updatedAtMs = nowMs;
+    if (it->state == State::Preparing) {
+        const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
+        if (hostMap.has_value() && Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
+            return {State::Preparing, {}, it->hostPlacement};
+        }
+        it->state = State::Advertised;
+        it->preparationRequester = -1;
+    }
     if (it->state == State::Claimed) {
+        const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
+        if (m_seamlessCoop && hostMap.has_value() &&
+            Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
+            return {State::Claimed, {}, it->hostPlacement};
+        }
         it->state = State::Delivered;
     }
     if (it->state == State::Delivered) {
-        return {State::Delivered, it->rawClaim};
+        return {State::Delivered, it->rawClaim, it->hostPlacement};
     }
-    return {it->state, {}};
+    return {it->state, {}, {}};
 }
 
-QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs) {
+QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
+                                      const QByteArray& hostPlacement) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -379,9 +415,18 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs)
     std::vector<Candidate> candidates;
     const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
-    for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
+    const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
+    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
         if (it->state == State::Advertised &&
             MatchesSearch(request, it->advertisement, anywhereSummons)) {
+            if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
+                Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
+                it->state = State::Preparing;
+                it->hostPlacement = hostPlacement;
+                it->preparationRequester = requester;
+                it->updatedAtMs = nowMs;
+                continue;
+            }
             candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
                                                        it->rawAdvertisement, it->advertisement,
                                                        request, anywhereSummons)});
@@ -411,7 +456,8 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs)
 }
 
 SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
-                                              const QByteArray& rawRequest, qint64 nowMs) {
+                                              const QByteArray& rawRequest, qint64 nowMs,
+                                              const QByteArray& hostPlacement) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -460,6 +506,13 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
     target->state = State::Claimed;
     target->claim = request;
     target->rawClaim = rawRequest;
+    if (m_seamlessCoop && !hostPlacement.isEmpty() &&
+        hostPlacement.size() <= MaxHostPlacementSize && !hostPlacement.contains('\r') &&
+        !hostPlacement.contains('\n')) {
+        target->hostPlacement = hostPlacement;
+    } else {
+        target->hostPlacement.clear();
+    }
     target->updatedAtMs = nowMs;
     result.status = ClaimStatus::Claimed;
     return result;
@@ -488,6 +541,9 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
             it->updatedAtMs = nowMs;
             if (m_seamlessCoop && !forceConsume && IsSeamlessActiveState(it->state)) {
                 ++result.retained;
+                if (!it->hostPlacement.isEmpty()) {
+                    result.pendingHostPlacement = it->hostPlacement;
+                }
                 continue;
             }
             it->state = State::Consumed;
