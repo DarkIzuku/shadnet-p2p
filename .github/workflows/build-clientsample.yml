@@ -1,0 +1,41 @@
+name: Build shadnet-sample
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup Visual Studio shell
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Configure CMake
+        run: >
+          cmake -G Ninja
+          -B build-clientsample
+          -S clientsample
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build shadnet-sample
+        run: >
+          cmake --build build-clientsample
+          --config Release
+          --parallel $env:NUMBER_OF_PROCESSORS
+
+      - name: Upload shadnet-sample
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadnet-sample-windows
+          path: build-clientsample/shadnet-sample.exe
