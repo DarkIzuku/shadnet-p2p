@@ -133,13 +133,19 @@ if(BUILD_TESTING)
         src/webapi_routes_bloodborne.cpp
         src/webapi_routes_bloodborne_bootstrap.cpp
         src/database.cpp
+        "${PROTO_OUT}/shadnet.pb.h"
     )
-    target_include_directories(test_bloodborne_bootstrap PRIVATE src)
+    target_include_directories(test_bloodborne_bootstrap PRIVATE
+        src
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
     target_link_libraries(test_bloodborne_bootstrap PRIVATE
         Qt6::Core
         Qt6::Network
         Qt6::Sql
         Qt6::HttpServer
+        libprotobuf
     )
     add_test(NAME bloodborne_bootstrap COMMAND test_bloodborne_bootstrap)
 
