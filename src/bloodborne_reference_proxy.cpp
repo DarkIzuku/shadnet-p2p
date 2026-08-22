@@ -97,7 +97,7 @@ QJsonValue JsonSchema(const QJsonValue& value) {
         const QJsonArray array = value.toArray();
         QJsonArray result;
         result.append(array.isEmpty() ? QJsonValue(QStringLiteral("<empty>"))
-                                      : JsonSchema(array.front()));
+                                      : JsonSchema(array.at(0)));
         return result;
     }
     if (value.isBool())
