@@ -46,29 +46,56 @@ bool InsertAccount(Database &db, const QString &npid, const QString &email,
 int main(int argc, char *argv[]) {
   QCoreApplication app(argc, argv);
 
-  const QString baseUrl = QStringLiteral("http://100.64.10.20:31315");
+  const QString baseUrl = QStringLiteral("http://73.244.12.22:31315");
   const QByteArray ssInfo = Bloodborne::BuildServerStatusInfo(baseUrl + '/');
-  CHECK(ssInfo.startsWith("<ss>0</ss>\n<gameurl2>\n"));
-  CHECK(ssInfo.endsWith("</gameurl2>\n"));
+  CHECK(ssInfo.startsWith("<ss>0</ss>"));
+  CHECK(ssInfo.left(10) == QByteArray::fromHex("3c73733e303c2f73733e"));
+  CHECK(ssInfo.front() == '<');
+  CHECK(ssInfo.contains("<gameurl2>"));
   CHECK(ssInfo.count("<api_") == 37);
   CHECK(!ssInfo.contains("gameurl3"));
   CHECK(!ssInfo.contains("thehuntersdream.com"));
   CHECK(!ssInfo.contains("scej-network.jp"));
+  CHECK(QByteArray(Bloodborne::ServerStatusInfoContentType)
+            .startsWith("text/plain"));
 
   for (const Bloodborne::BootstrapApi &api : Bloodborne::BootstrapApis()) {
-    const QByteArray expected = QByteArray("<") + api.name + ">" +
-                                baseUrl.toUtf8() + api.path + "</" + api.name +
-                                ">";
+    const QByteArray opening = QByteArray("<") + api.name + ">";
+    const QByteArray closing = QByteArray("</") + api.name + ">";
+    const QByteArray expected = opening + baseUrl.toUtf8() + closing;
     CHECK(ssInfo.contains(expected));
+    CHECK(ssInfo.count(opening) == 1);
+
+    const qsizetype valueBegin = ssInfo.indexOf(opening) + opening.size();
+    const qsizetype valueEnd = ssInfo.indexOf(closing, valueBegin);
+    CHECK(valueEnd >= valueBegin);
+    CHECK(ssInfo.mid(valueBegin, valueEnd - valueBegin) == baseUrl.toUtf8());
   }
-  CHECK(ssInfo.contains("<api_SummonDataCreate>http://100.64.10.20:31315/"
-                        "summon_messenger/create"));
+  CHECK(ssInfo.contains("<api_Login>http://73.244.12.22:31315</api_Login>"));
+  CHECK(ssInfo.contains("<api_SummonDataCreate>http://73.244.12.22:31315</"
+                        "api_SummonDataCreate>"));
+  CHECK(!ssInfo.contains("/basic_utils/"));
+  CHECK(!ssInfo.contains("/blood_messenger/"));
+  CHECK(!ssInfo.contains("/summon_messenger/"));
+  CHECK(!ssInfo.contains("/channel/"));
+  CHECK(!ssInfo.contains("/tomb_messenger/"));
+  CHECK(!ssInfo.contains("/wandering_ghost/"));
+
+  CHECK(ssInfo.contains("<ReloadServerStatusInfoInterval2>300</"
+                        "ReloadServerStatusInfoInterval2>"));
   CHECK(ssInfo.contains(
-      "<api_SummonDataGetList>http://100.64.10.20:31315/summon_messenger/get"));
-  CHECK(ssInfo.contains("<api_SummonDataRemove>http://100.64.10.20:31315/"
-                        "summon_messenger/delete"));
-  CHECK(ssInfo.contains("<api_SummonDataSummon>http://100.64.10.20:31315/"
-                        "summon_messenger/request"));
+      "<SummonDataCreateInterval2>30</SummonDataCreateInterval2>"));
+  CHECK(ssInfo.contains(
+      "<SummonDataGetListInterval2>35</SummonDataGetListInterval2>"));
+  CHECK(ssInfo.contains("<SummonDataGetListGetMaxCount2>20</"
+                        "SummonDataGetListGetMaxCount2>"));
+  CHECK(ssInfo.contains("<SummonDataCoopMatchingLevelLowerAbs2>-20</"
+                        "SummonDataCoopMatchingLevelLowerAbs2>"));
+  CHECK(ssInfo.contains("<NoticeEmergencyGetInterval2>60</"
+                        "NoticeEmergencyGetInterval2>"));
+  CHECK(ssInfo.contains("<PlayLog2>1</PlayLog2>"));
+  CHECK(ssInfo.endsWith(
+      "<Playlog_Guest_StartMultiPlay2>1</Playlog_Guest_StartMultiPlay2>\n"));
 
   const QJsonObject login =
       Bloodborne::BuildLoginResponse(42, 4, QStringLiteral("session-42"));

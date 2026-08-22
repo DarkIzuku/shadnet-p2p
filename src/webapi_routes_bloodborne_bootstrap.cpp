@@ -229,7 +229,8 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    TraceRequest(QStringLiteral("ss.info"), request);
                    TraceResponse(QStringLiteral("ss.info"), QHttpServerResponse::StatusCode::Ok,
                                  serverStatusInfo);
-                   return QHttpServerResponse{"text/plain; charset=utf-8", serverStatusInfo,
+                   return QHttpServerResponse{Bloodborne::ServerStatusInfoContentType,
+                                              serverStatusInfo,
                                               QHttpServerResponse::StatusCode::Ok};
                });
 

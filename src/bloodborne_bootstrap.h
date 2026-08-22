@@ -11,6 +11,8 @@
 
 namespace Bloodborne {
 
+inline constexpr char ServerStatusInfoContentType[] = "text/plain; charset=utf-8";
+
 struct BootstrapApi {
     const char* name;
     const char* path;

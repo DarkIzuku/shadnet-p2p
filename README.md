@@ -326,9 +326,10 @@ folder:
 }
 ```
 
-The private shadNet server now provides `/bb-eu/ss.info` and publishes the existing
-`/summon_messenger/*` routes directly, so no `thehuntersdream.com` override is needed. See
-[the Bloodborne bootstrap contract](documentation/bloodborne-bootstrap.md) for the demonstrated
+The private shadNet server now provides `/bb-eu/ss.info`. Every `api_*` value is the private
+shadNet base URL; Bloodborne appends paths such as `/basic_utils/login` and
+`/summon_messenger/create` itself. No `thehuntersdream.com` override is needed. See [the
+Bloodborne bootstrap contract](documentation/bloodborne-bootstrap.md) for the demonstrated
 request/response formats and the incremental Online test sequence.
 
 The client README lists the exact Linux, Windows, macOS, and portable paths.
