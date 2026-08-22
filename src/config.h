@@ -62,6 +62,14 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodbornePublicBaseUrl;
     }
+    bool IsBloodborneReferenceProxyEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneReferenceProxyEnabled;
+    }
+    QString GetBloodborneReferenceProxyUrl() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneReferenceProxyUrl;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -119,6 +127,8 @@ private:
     bool m_bloodborneSeamlessCoop = false;
     bool m_bloodborneBootstrapEnabled = false;
     QString m_bloodbornePublicBaseUrl;
+    bool m_bloodborneReferenceProxyEnabled = false;
+    QString m_bloodborneReferenceProxyUrl = "http://thehuntersdream.com:18671";
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

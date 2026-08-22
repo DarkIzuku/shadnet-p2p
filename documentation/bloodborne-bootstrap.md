@@ -29,6 +29,47 @@ SHADNET_BLOODBORNE_BOOTSTRAP_TRACE=1
 `AuthorizationCode`, passwords, tokens, and secrets are redacted. The existing summon trace and
 seamless co-op settings are unchanged.
 
+## Temporary reference proxy
+
+The development-only reference proxy is disabled by default. It must never be enabled on the
+final independent server. To capture one reference session, add:
+
+```ini
+BloodborneBootstrapEnabled=true
+BloodborneReferenceProxyEnabled=true
+BloodborneReferenceProxyUrl=http://thehuntersdream.com:18671
+```
+
+`BloodborneReferenceProxyEnabled=true` is rejected unless the bootstrap is also enabled. The
+upstream URL must be an HTTP(S) base URL without a path, query, or fragment. In this mode shadNet
+continues to serve its embedded golden Base64 `/bb-eu/ss.info`, and the four
+`/summon_messenger/*` routes always remain on the local `Bloodborne::SummonBroker`. All other
+known Bloodborne backend prefixes are forwarded without changing their method, path, query, body,
+Content-Type, User-Agent, status, or response body. Login is deliberately forwarded only in this
+temporary mode so the upstream creates its own `UserId` and `SessionId`.
+
+Enable sanitized console tracing before starting shadNet:
+
+```powershell
+$env:SHADNET_BLOODBORNE_REFERENCE_TRACE="1"
+.\shadnet.exe
+```
+
+Every proxied operation is also written beneath:
+
+```text
+captures/bloodborne-reference/<UTC timestamp>/
+```
+
+The directory contains `manifest.jsonl`, numbered request/response bodies, `summary.json`, and
+`summary.txt`. JSON authentication values such as `AuthorizationCode`, passwords, tokens, and
+bearer values are replaced with `<redacted>` in both console and disk captures. The original body
+is still forwarded byte-for-byte to the configured upstream. Disable the mode after the capture:
+
+```ini
+BloodborneReferenceProxyEnabled=false
+```
+
 ## Client host override
 
 Only the Sony server-status host needs redirecting. Replace the example IP with the shadNet

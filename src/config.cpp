@@ -54,6 +54,9 @@ void ConfigManager::Parse(const QString& path) {
     m_bloodborneSeamlessCoop = boolean("BloodborneSeamlessCoop", false);
     m_bloodborneBootstrapEnabled = boolean("BloodborneBootstrapEnabled", false);
     m_bloodbornePublicBaseUrl = str("BloodbornePublicBaseUrl", "").trimmed();
+    m_bloodborneReferenceProxyEnabled = boolean("BloodborneReferenceProxyEnabled", false);
+    m_bloodborneReferenceProxyUrl =
+        str("BloodborneReferenceProxyUrl", "http://thehuntersdream.com:18671").trimmed();
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();

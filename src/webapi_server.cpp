@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "webapi_server.h"
 
+#include <utility>
+
 #include <QDebug>
 #include <QHostAddress>
 #include <QHttpServerRequest>
@@ -11,6 +13,7 @@
 #include <QJsonObject>
 #include <QUrl>
 #include <webapi_routes_users.h>
+#include "bloodborne_reference_proxy.h"
 #include "bloodborne_ssinfo_reference.h"
 #include "webapi_auth.h"
 #include "webapi_routes_bloodborne.h"
@@ -25,6 +28,12 @@ WebApiServer::~WebApiServer() = default;
 bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedState* shared) {
     m_config = config;
     m_shared = shared;
+
+    if (m_config->IsBloodborneReferenceProxyEnabled() &&
+        !m_config->IsBloodborneBootstrapEnabled()) {
+        qCritical() << "BloodborneReferenceProxyEnabled requires BloodborneBootstrapEnabled=true";
+        return false;
+    }
 
     if (m_config->IsBloodborneBootstrapEnabled()) {
         const QUrl publicUrl(m_config->GetBloodbornePublicBaseUrl());
@@ -51,6 +60,34 @@ bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedSta
             << "Bloodborne bootstrap: serving reference Base64 ss.info bytes="
             << Bloodborne::ReferenceServerStatusInfo().size()
             << " decoded_xml_bytes=" << decodedXml.size();
+
+        if (m_config->IsBloodborneReferenceProxyEnabled()) {
+            const QUrl upstreamUrl(m_config->GetBloodborneReferenceProxyUrl());
+            if (!upstreamUrl.isValid() || upstreamUrl.host().isEmpty() ||
+                (upstreamUrl.scheme() != QStringLiteral("http") &&
+                 upstreamUrl.scheme() != QStringLiteral("https")) ||
+                (!upstreamUrl.path().isEmpty() && upstreamUrl.path() != QStringLiteral("/")) ||
+                !upstreamUrl.query().isEmpty() || !upstreamUrl.fragment().isEmpty()) {
+                qCritical().noquote()
+                    << "BloodborneReferenceProxyUrl is not a valid http(s) base URL:"
+                    << m_config->GetBloodborneReferenceProxyUrl();
+                return false;
+            }
+
+            Bloodborne::ReferenceProxy::Options options;
+            options.upstreamUrl = upstreamUrl;
+            m_bloodborneReferenceProxy =
+                std::make_unique<Bloodborne::ReferenceProxy>(std::move(options), this);
+            QString proxyError;
+            if (!m_bloodborneReferenceProxy->Initialize(&proxyError)) {
+                qCritical().noquote()
+                    << "Bloodborne reference proxy failed to initialize:" << proxyError;
+                return false;
+            }
+            qWarning().noquote()
+                << "Bloodborne reference proxy ENABLED - development capture mode; upstream="
+                << upstreamUrl.toString(QUrl::RemovePath | QUrl::StripTrailingSlash);
+        }
     }
 
     m_db = std::make_unique<Database>(QStringLiteral("webapi_main"));
@@ -97,13 +134,20 @@ void WebApiServer::RegisterRoutes() {
     WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);
     if (m_config->IsBloodborneBootstrapEnabled()) {
-        WebApiRoutes::RegisterBloodborneBootstrapRoutes(*m_http, *m_db, *m_shared,
-                                                        m_config->GetBloodbornePublicBaseUrl());
+        WebApiRoutes::RegisterBloodborneBootstrapRoutes(
+            *m_http, *m_db, *m_shared, m_config->GetBloodbornePublicBaseUrl(),
+            m_config->IsBloodborneReferenceProxyEnabled());
     }
     WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled());
 
     m_http->setMissingHandler(
-        this, [](const QHttpServerRequest& req, QHttpServerResponder& responder) {
+        this, [this](const QHttpServerRequest& req, QHttpServerResponder& responder) {
+            if (m_bloodborneReferenceProxy != nullptr &&
+                Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {
+                m_bloodborneReferenceProxy->Forward(req, std::move(responder));
+                return;
+            }
+
             qWarning() << "WebAPI: unhandled" << req.method() << req.url().path()
                        << "(query:" << req.url().query() << ")";
 

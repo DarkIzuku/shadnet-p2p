@@ -221,8 +221,7 @@ bool HasMessageId(const QJsonObject& body, const char* expected) {
 } // namespace
 
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
-                                       const QString& publicBaseUrl) {
-    const auto runtime = std::make_shared<BootstrapRuntime>(db, shared);
+                                       const QString& publicBaseUrl, bool referenceProxyEnabled) {
     const QByteArray serverStatusInfo = Bloodborne::ReferenceServerStatusInfo();
 
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
@@ -234,6 +233,13 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                                               serverStatusInfo,
                                               QHttpServerResponse::StatusCode::Ok};
                });
+
+    if (referenceProxyEnabled) {
+        qInfo() << "Bloodborne bootstrap: local backend routes disabled for reference proxy mode";
+        return;
+    }
+
+    const auto runtime = std::make_shared<BootstrapRuntime>(db, shared);
 
     http.route(
         "/basic_utils/login", QHttpServerRequest::Method::Post,

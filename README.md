@@ -160,6 +160,8 @@ WebApiPort=31315
 BloodborneSeamlessCoop=false
 BloodborneBootstrapEnabled=true
 BloodbornePublicBaseUrl=http://100.101.102.103:31315
+BloodborneReferenceProxyEnabled=false
+BloodborneReferenceProxyUrl=http://thehuntersdream.com:18671
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

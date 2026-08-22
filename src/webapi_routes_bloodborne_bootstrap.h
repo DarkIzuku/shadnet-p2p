@@ -11,6 +11,7 @@ struct SharedState;
 namespace WebApiRoutes {
 
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
-                                       const QString& publicBaseUrl);
+                                       const QString& publicBaseUrl,
+                                       bool referenceProxyEnabled = false);
 
 } // namespace WebApiRoutes

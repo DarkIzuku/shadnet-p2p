@@ -11,6 +11,9 @@
 #include "database.h"
 
 struct SharedState;
+namespace Bloodborne {
+class ReferenceProxy;
+}
 
 class WebApiServer : public QObject {
     Q_OBJECT
@@ -28,5 +31,6 @@ private:
     std::unique_ptr<QHttpServer> m_http;
     std::unique_ptr<QTcpServer> m_tcp;
     std::unique_ptr<Database> m_db;
+    std::unique_ptr<Bloodborne::ReferenceProxy> m_bloodborneReferenceProxy;
     SharedState* m_shared = nullptr;
 };

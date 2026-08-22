@@ -87,6 +87,8 @@ set(SOURCES
     src/bloodborne_bootstrap.cpp
     src/bloodborne_ssinfo_reference.h
     src/bloodborne_ssinfo_reference.cpp
+    src/bloodborne_reference_proxy.h
+    src/bloodborne_reference_proxy.cpp
     src/webapi_routes_bloodborne.h
     src/webapi_routes_bloodborne.cpp
     src/webapi_routes_bloodborne_bootstrap.h
@@ -137,6 +139,18 @@ if(BUILD_TESTING)
         Qt6::HttpServer
     )
     add_test(NAME bloodborne_bootstrap COMMAND test_bloodborne_bootstrap)
+
+    add_executable(test_bloodborne_reference_proxy EXCLUDE_FROM_ALL
+        tests/test_bloodborne_reference_proxy.cpp
+        src/bloodborne_reference_proxy.cpp
+    )
+    target_include_directories(test_bloodborne_reference_proxy PRIVATE src)
+    target_link_libraries(test_bloodborne_reference_proxy PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::HttpServer
+    )
+    add_test(NAME bloodborne_reference_proxy COMMAND test_bloodborne_reference_proxy)
 
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp
