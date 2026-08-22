@@ -4,11 +4,22 @@
 #include <iostream>
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QEventLoop>
+#include <QHostAddress>
+#include <QHttpServer>
+#include <QHttpServerResponse>
 #include <QJsonArray>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QSqlQuery>
+#include <QTcpServer>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include "bloodborne_bootstrap.h"
+#include "bloodborne_ssinfo_reference.h"
 #include "database.h"
 
 namespace {
@@ -41,10 +52,84 @@ bool InsertAccount(Database &db, const QString &npid, const QString &email,
   return query.exec();
 }
 
+struct HttpGetResult {
+  bool finished = false;
+  int status = 0;
+  qint64 contentLength = -1;
+  QByteArray body;
+};
+
+HttpGetResult Get(const QUrl &url) {
+  QNetworkAccessManager manager;
+  QNetworkReply *reply = manager.get(QNetworkRequest(url));
+  QEventLoop loop;
+  QTimer timeout;
+  timeout.setSingleShot(true);
+  QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+  QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+  timeout.start(5000);
+  loop.exec();
+
+  HttpGetResult result;
+  result.finished = reply->isFinished();
+  if (result.finished) {
+    result.status =
+        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    result.contentLength =
+        reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+    result.body = reply->readAll();
+  } else {
+    reply->abort();
+  }
+  delete reply;
+  return result;
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
   QCoreApplication app(argc, argv);
+
+  QString referenceError;
+  QByteArray decodedReference;
+  CHECK(Bloodborne::ValidateReferenceServerStatusInfo(&referenceError,
+                                                      &decodedReference));
+  CHECK(referenceError.isEmpty());
+  CHECK(decodedReference.size() ==
+        Bloodborne::ReferenceDecodedServerStatusInfoSize);
+  CHECK(decodedReference.startsWith("<ss>0</ss>"));
+  CHECK(decodedReference.contains("<gameurl2>"));
+  CHECK(decodedReference.count("<api_") == 37);
+  CHECK(QCryptographicHash::hash(decodedReference, QCryptographicHash::Sha256)
+            .toHex()
+            .toUpper() == Bloodborne::ReferenceDecodedServerStatusInfoSha256);
+
+  QHttpServer http;
+  http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
+             [](const QHttpServerRequest &) {
+               return QHttpServerResponse{
+                   Bloodborne::ServerStatusInfoContentType,
+                   Bloodborne::ReferenceServerStatusInfo(),
+                   QHttpServerResponse::StatusCode::Ok};
+             });
+  QTcpServer tcp;
+  CHECK(tcp.listen(QHostAddress::LocalHost, 0));
+  CHECK(http.bind(&tcp));
+
+  const HttpGetResult referenceResponse =
+      Get(QUrl(QStringLiteral("http://127.0.0.1:%1/bb-eu/ss.info")
+                   .arg(tcp.serverPort())));
+  CHECK(referenceResponse.finished);
+  CHECK(referenceResponse.status == 200);
+  CHECK(referenceResponse.contentLength ==
+        Bloodborne::ReferenceServerStatusInfoSize);
+  CHECK(referenceResponse.body.size() ==
+        Bloodborne::ReferenceServerStatusInfoSize);
+  CHECK(referenceResponse.body.startsWith("PHNzPjA8L3"));
+  CHECK(QCryptographicHash::hash(referenceResponse.body,
+                                 QCryptographicHash::Sha256)
+            .toHex()
+            .toUpper() == Bloodborne::ReferenceServerStatusInfoSha256);
 
   const QString baseUrl = QStringLiteral("http://73.244.12.22:31315");
   const QByteArray ssInfo = Bloodborne::BuildServerStatusInfo(baseUrl + '/');

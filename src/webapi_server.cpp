@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QUrl>
 #include <webapi_routes_users.h>
+#include "bloodborne_ssinfo_reference.h"
 #include "webapi_auth.h"
 #include "webapi_routes_bloodborne.h"
 #include "webapi_routes_bloodborne_bootstrap.h"
@@ -38,6 +39,18 @@ bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedSta
                 << m_config->GetBloodbornePublicBaseUrl();
             return false;
         }
+
+        QString validationError;
+        QByteArray decodedXml;
+        if (!Bloodborne::ValidateReferenceServerStatusInfo(&validationError, &decodedXml)) {
+            qCritical().noquote() << "Bloodborne bootstrap reference ss.info validation failed:"
+                                  << validationError;
+            return false;
+        }
+        qInfo().nospace().noquote()
+            << "Bloodborne bootstrap: serving reference Base64 ss.info bytes="
+            << Bloodborne::ReferenceServerStatusInfo().size()
+            << " decoded_xml_bytes=" << decodedXml.size();
     }
 
     m_db = std::make_unique<Database>(QStringLiteral("webapi_main"));

@@ -21,6 +21,7 @@
 #include <QUuid>
 
 #include "bloodborne_bootstrap.h"
+#include "bloodborne_ssinfo_reference.h"
 #include "client_session.h"
 #include "database.h"
 
@@ -222,7 +223,7 @@ bool HasMessageId(const QJsonObject& body, const char* expected) {
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
                                        const QString& publicBaseUrl) {
     const auto runtime = std::make_shared<BootstrapRuntime>(db, shared);
-    const QByteArray serverStatusInfo = Bloodborne::BuildServerStatusInfo(publicBaseUrl);
+    const QByteArray serverStatusInfo = Bloodborne::ReferenceServerStatusInfo();
 
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
                [serverStatusInfo](const QHttpServerRequest& request) {
