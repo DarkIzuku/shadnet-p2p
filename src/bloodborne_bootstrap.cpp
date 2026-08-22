@@ -5,6 +5,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "bloodborne_ssinfo_reference.h"
+
 namespace Bloodborne {
 namespace {
 
@@ -48,7 +50,7 @@ constexpr std::array<BootstrapApi, 37> ApiTable{{
     {"api_WanderingGhostGet", "/wandering_ghost/get"},
 }};
 
-constexpr auto ServerStatusPrefix = R"ss(<ss>0</ss>
+[[maybe_unused]] constexpr auto ServerStatusPrefix = R"ss(<ss>0</ss>
 <msg2>
 <lang3></lang3>
 <lang4></lang4>
@@ -86,7 +88,7 @@ constexpr auto ServerStatusPrefix = R"ss(<ss>0</ss>
 <gameurl2>
 )ss";
 
-constexpr auto ServerStatusSettings = R"ss(</gameurl2>
+[[maybe_unused]] constexpr auto ServerStatusSettings = R"ss(</gameurl2>
 
 <ReloadServerStatusInfoInterval2>300</ReloadServerStatusInfoInterval2>
 <SummonDataCreateInterval2>30</SummonDataCreateInterval2>
@@ -207,29 +209,73 @@ const std::array<BootstrapApi, 37>& BootstrapApis() {
     return ApiTable;
 }
 
-QByteArray BuildServerStatusInfo(const QString& publicBaseUrl) {
+QByteArray BuildServerStatusInfo(const QString& publicBaseUrl, QByteArray* decodedXml,
+                                 QString* error) {
     QString baseUrl = publicBaseUrl.trimmed();
     while (baseUrl.endsWith('/')) {
         baseUrl.chop(1);
     }
 
-    QByteArray body(ServerStatusPrefix);
+    const auto fail = [error](const QString& message) {
+        if (error != nullptr)
+            *error = message;
+        return QByteArray{};
+    };
+    if (baseUrl.isEmpty())
+        return fail(QStringLiteral("BloodbornePublicBaseUrl is empty"));
+
+    QByteArray xml;
+    QString referenceError;
+    if (!ValidateReferenceServerStatusInfo(&referenceError, &xml))
+        return fail(QStringLiteral("reference template is invalid: %1").arg(referenceError));
+
     const QByteArray encodedBaseUrl = baseUrl.toUtf8();
     for (const BootstrapApi& api : ApiTable) {
-        body += '<';
-        body += api.name;
-        body += '>';
-        body += encodedBaseUrl;
-        body += "</";
-        body += api.name;
-        body += ">\n";
+        const QByteArray opening = QByteArray("<") + api.name + ">";
+        const QByteArray closing = QByteArray("</") + api.name + ">";
+        const qsizetype openingOffset = xml.indexOf(opening);
+        if (openingOffset < 0 || xml.indexOf(opening, openingOffset + opening.size()) >= 0)
+            return fail(QStringLiteral("template does not contain exactly one %1")
+                            .arg(QString::fromLatin1(opening)));
+        const qsizetype valueOffset = openingOffset + opening.size();
+        const qsizetype closingOffset = xml.indexOf(closing, valueOffset);
+        if (closingOffset < valueOffset)
+            return fail(QStringLiteral("template is missing %1").arg(QString::fromLatin1(closing)));
+        xml.replace(valueOffset, closingOffset - valueOffset, encodedBaseUrl);
     }
-    body += ServerStatusSettings;
-    return body;
+
+    if (!xml.startsWith("<ss>0</ss>") || !xml.contains("<gameurl2>") ||
+        xml.count("<api_") != static_cast<qsizetype>(ApiTable.size())) {
+        return fail(QStringLiteral("generated decoded XML failed structural validation"));
+    }
+    if (xml.contains("thehuntersdream.com:18671"))
+        return fail(QStringLiteral("generated decoded XML still contains the reference upstream"));
+
+    for (const BootstrapApi& api : ApiTable) {
+        const QByteArray opening = QByteArray("<") + api.name + ">";
+        const QByteArray closing = QByteArray("</") + api.name + ">";
+        if (!xml.contains(opening + encodedBaseUrl + closing)) {
+            return fail(QStringLiteral("generated value for %1 is invalid")
+                            .arg(QString::fromLatin1(api.name)));
+        }
+    }
+
+    const QByteArray encoded = xml.toBase64();
+    const auto decodedCheck =
+        QByteArray::fromBase64Encoding(encoded, QByteArray::AbortOnBase64DecodingErrors);
+    if (!decodedCheck || decodedCheck.decoded != xml)
+        return fail(QStringLiteral("generated HTTP body failed strict Base64 round-trip"));
+
+    if (decodedXml != nullptr)
+        *decodedXml = xml;
+    if (error != nullptr)
+        error->clear();
+    return encoded;
 }
 
 QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId) {
     QJsonObject body;
+    body.insert(QStringLiteral("MessageId"), QStringLiteral("LoginResponse"));
     body.insert(QStringLiteral("ResKind"), 0);
     body.insert(QStringLiteral("UserId"), userId);
     body.insert(QStringLiteral("UserStatus"), 0);
@@ -247,6 +293,7 @@ QJsonObject BuildServerTimeResponse() {
 
 QJsonObject BuildNoticeNormalResponse() {
     QJsonObject body;
+    body.insert(QStringLiteral("MessageId"), QStringLiteral("NoticeNormalGetResponse"));
     body.insert(QStringLiteral("ResKind"), 0);
     body.insert(QStringLiteral("NoticeList"), QJsonArray{});
     return body;
@@ -254,6 +301,7 @@ QJsonObject BuildNoticeNormalResponse() {
 
 QJsonObject BuildNoticeEmergencyResponse(const QString& checkTime) {
     QJsonObject body;
+    body.insert(QStringLiteral("MessageId"), QStringLiteral("NoticeEmergencyGetResponse"));
     body.insert(QStringLiteral("ResKind"), 0);
     body.insert(QStringLiteral("CheckTime"), checkTime);
     body.insert(QStringLiteral("NoticeList"), QJsonArray{});

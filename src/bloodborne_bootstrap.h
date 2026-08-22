@@ -19,7 +19,8 @@ struct BootstrapApi {
 };
 
 const std::array<BootstrapApi, 37>& BootstrapApis();
-QByteArray BuildServerStatusInfo(const QString& publicBaseUrl);
+QByteArray BuildServerStatusInfo(const QString& publicBaseUrl, QByteArray* decodedXml = nullptr,
+                                 QString* error = nullptr);
 
 QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId);
 QJsonObject BuildServerTimeResponse();

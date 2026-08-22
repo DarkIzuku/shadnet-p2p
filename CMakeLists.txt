@@ -129,6 +129,9 @@ if(BUILD_TESTING)
         tests/test_bloodborne_bootstrap.cpp
         src/bloodborne_bootstrap.cpp
         src/bloodborne_ssinfo_reference.cpp
+        src/bloodborne_summon_broker.cpp
+        src/webapi_routes_bloodborne.cpp
+        src/webapi_routes_bloodborne_bootstrap.cpp
         src/database.cpp
     )
     target_include_directories(test_bloodborne_bootstrap PRIVATE src)

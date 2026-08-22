@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "webapi_routes_bloodborne_bootstrap.h"
 
+#include <array>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <optional>
 
-#include <QDateTime>
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QHttpServer>
 #include <QHttpServerRequest>
 #include <QHttpServerResponse>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -34,8 +37,12 @@ struct Identity {
 };
 
 struct BootstrapSession {
+    qint64 userId = 0;
     QString sessionId;
     QString npid;
+    QString platformAccountId;
+    int languageId = 0;
+    int regionId = 0;
     qint64 charaId = 0;
 };
 
@@ -82,14 +89,20 @@ public:
         return result;
     }
 
-    std::optional<BootstrapSession> StartSession(const Identity& identity) {
+    std::optional<BootstrapSession> StartSession(const Identity& identity,
+                                                 const QString& platformAccountId, int languageId,
+                                                 int regionId) {
         const QList<qint64> charaIds = m_db.GetOrCreateBloodborneCharaIds(identity.userId, 1);
         if (charaIds.size() != 1)
             return std::nullopt;
 
         BootstrapSession session;
+        session.userId = identity.userId;
         session.sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         session.npid = identity.npid;
+        session.platformAccountId = platformAccountId;
+        session.languageId = languageId;
+        session.regionId = regionId;
         session.charaId = charaIds.front();
         QMutexLocker lock(&m_mutex);
         m_sessions.insert(identity.userId, session);
@@ -106,12 +119,16 @@ public:
         const qint64 userId = userValue.toVariant().toLongLong();
         const QString queryUserId =
             QUrlQuery(request.url()).queryItemValue(QStringLiteral("user_id"));
-        if (!queryUserId.isEmpty() && queryUserId.toLongLong() != userId)
-            return std::nullopt;
+        if (!queryUserId.isEmpty()) {
+            bool queryValid = false;
+            const qint64 parsedQueryUserId = queryUserId.toLongLong(&queryValid);
+            if (!queryValid || parsedQueryUserId != userId)
+                return std::nullopt;
+        }
 
         QMutexLocker lock(&m_mutex);
         const auto it = m_sessions.constFind(userId);
-        if (it == m_sessions.constEnd() || it->sessionId != sessionId)
+        if (it == m_sessions.constEnd() || it->userId != userId || it->sessionId != sessionId)
             return std::nullopt;
         return *it;
     }
@@ -143,51 +160,52 @@ QString MethodName(QHttpServerRequest::Method method) {
     }
 }
 
-QJsonObject Redact(const QJsonObject& input) {
-    QJsonObject result = input;
-    for (auto it = result.begin(); it != result.end(); ++it) {
-        const QString key = it.key().toLower();
-        if (key.contains(QStringLiteral("password")) || key.contains(QStringLiteral("token")) ||
-            key.contains(QStringLiteral("secret")) ||
-            key.contains(QStringLiteral("authorizationcode"))) {
-            it.value() = QStringLiteral("<redacted>");
-        }
-    }
-    return result;
-}
-
 void TraceRequest(const QString& api, const QHttpServerRequest& request,
                   const std::optional<QJsonObject>& body = std::nullopt) {
     if (!EnvEnabled("SHADNET_BLOODBORNE_BOOTSTRAP_TRACE"))
         return;
 
-    QString renderedBody = QStringLiteral("<none>");
-    if (body.has_value()) {
-        renderedBody =
-            QString::fromUtf8(QJsonDocument(Redact(*body)).toJson(QJsonDocument::Compact));
-    } else if (!request.body().isEmpty()) {
-        renderedBody = QStringLiteral("<invalid JSON; omitted>");
+    const qint64 userId = body.has_value() && body->value(QStringLiteral("UserId")).isDouble()
+                              ? body->value(QStringLiteral("UserId")).toVariant().toLongLong()
+                              : 0;
+    qInfo().noquote() << "[BLOODBORNE LOCAL REQUEST]"
+                      << "api=" + api << "user_id=" + QString::number(userId)
+                      << "method=" + MethodName(request.method()) << "path=" + request.url().path();
+
+    if (!body.has_value())
+        return;
+    static const std::array<const char*, 4> BlobFields{"BloodData", "TombData",
+                                                       "WanderingGhostData", "ShellData"};
+    for (const char* field : BlobFields) {
+        const QJsonValue value = body->value(QLatin1String(field));
+        if (!value.isString())
+            continue;
+        const QByteArray bytes = value.toString().toUtf8();
+        const QByteArray hash =
+            QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex().toUpper();
+        qInfo().noquote() << "[BLOODBORNE LOCAL BLOB]"
+                          << "api=" + api << "field=" + QLatin1String(field)
+                          << "size=" + QString::number(bytes.size())
+                          << "sha256=" + QString::fromLatin1(hash);
     }
-    qInfo().noquote() << "[BLOODBORNE BOOTSTRAP REQUEST]"
-                      << "api=" + api << "method=" + MethodName(request.method())
-                      << "path=" + request.url().path()
-                      << "remote=" + request.remoteAddress().toString() << "body=" + renderedBody;
 }
 
 void TraceResponse(const QString& api, QHttpServerResponse::StatusCode status,
-                   const QByteArray& body) {
+                   const QJsonObject& body) {
     if (!EnvEnabled("SHADNET_BLOODBORNE_BOOTSTRAP_TRACE"))
         return;
-    qInfo().noquote() << "[BLOODBORNE BOOTSTRAP RESPONSE]"
+    const QJsonValue resKind = body.value(QStringLiteral("ResKind"));
+    qInfo().noquote() << "[BLOODBORNE LOCAL RESPONSE]"
                       << "api=" + api << "status=" + QString::number(static_cast<int>(status))
-                      << "body=" + QString::fromUtf8(body);
+                      << "res_kind=" + (resKind.isDouble() ? QString::number(resKind.toInt())
+                                                           : QStringLiteral("<none>"));
 }
 
 QHttpServerResponse JsonResponse(
     const QString& api, const QJsonObject& object,
     QHttpServerResponse::StatusCode status = QHttpServerResponse::StatusCode::Ok) {
     const QByteArray body = QJsonDocument(object).toJson(QJsonDocument::Compact);
-    TraceResponse(api, status, body);
+    TraceResponse(api, status, object);
     return QHttpServerResponse{"application/json", body, status};
 }
 
@@ -214,21 +232,66 @@ bool HasString(const QJsonObject& body, const char* name) {
     return body.value(QLatin1String(name)).isString();
 }
 
+bool HasArray(const QJsonObject& body, const char* name) {
+    return body.value(QLatin1String(name)).isArray();
+}
+
 bool HasMessageId(const QJsonObject& body, const char* expected) {
     return body.value(QStringLiteral("MessageId")).toString() == QLatin1String(expected);
+}
+
+bool HasSessionFields(const QJsonObject& body) {
+    return HasNumber(body, "UserId") && HasString(body, "SessionId") &&
+           !body.value(QStringLiteral("SessionId")).toString().isEmpty();
+}
+
+QJsonObject SuccessResponse(const char* messageId) {
+    QJsonObject response;
+    response.insert(QStringLiteral("MessageId"), QLatin1String(messageId));
+    response.insert(QStringLiteral("ResKind"), 0);
+    return response;
+}
+
+QJsonObject EmptyListResponse(const char* messageId, std::initializer_list<const char*> listNames) {
+    QJsonObject response = SuccessResponse(messageId);
+    for (const char* name : listNames)
+        response.insert(QLatin1String(name), QJsonArray{});
+    return response;
+}
+
+using RequestValidator = std::function<bool(const QJsonObject&)>;
+using ResponseBuilder = std::function<QJsonObject(const QJsonObject&)>;
+
+QHttpServerResponse HandleSessionEndpoint(const std::shared_ptr<BootstrapRuntime>& runtime,
+                                          const QString& api, const char* requestMessageId,
+                                          const QHttpServerRequest& request,
+                                          const RequestValidator& validate,
+                                          const ResponseBuilder& buildResponse) {
+    const auto body = ParseRequest(request);
+    TraceRequest(api, request, body);
+    if (!body || !HasMessageId(*body, requestMessageId) || !HasSessionFields(*body) ||
+        !validate(*body)) {
+        return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest,
+                             QStringLiteral("Invalid %1").arg(QLatin1String(requestMessageId)));
+    }
+    if (!runtime->ValidateSession(*body, request)) {
+        return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                             QStringLiteral("Unknown Bloodborne session"));
+    }
+    return JsonResponse(api, buildResponse(*body));
 }
 
 } // namespace
 
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
-                                       const QString& publicBaseUrl, bool referenceProxyEnabled) {
-    const QByteArray serverStatusInfo = Bloodborne::ReferenceServerStatusInfo();
-
+                                       const QString& publicBaseUrl,
+                                       const QByteArray& serverStatusInfo,
+                                       bool referenceProxyEnabled) {
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
                [serverStatusInfo](const QHttpServerRequest& request) {
                    TraceRequest(QStringLiteral("ss.info"), request);
                    TraceResponse(QStringLiteral("ss.info"), QHttpServerResponse::StatusCode::Ok,
-                                 serverStatusInfo);
+                                 QJsonObject{});
                    return QHttpServerResponse{Bloodborne::ServerStatusInfoContentType,
                                               serverStatusInfo,
                                               QHttpServerResponse::StatusCode::Ok};
@@ -263,13 +326,17 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                     api, QHttpServerResponse::StatusCode::Unauthorized,
                     QStringLiteral("No unique authenticated shadNet session for remote"));
             }
-            const auto session = runtime->StartSession(*identity);
+            const QString platformAccountId =
+                body->value(QStringLiteral("PlatformAccountId")).toString();
+            const int languageId = body->value(QStringLiteral("LanguageId")).toInt();
+            const int regionId = body->value(QStringLiteral("RegionId")).toInt();
+            const auto session =
+                runtime->StartSession(*identity, platformAccountId, languageId, regionId);
             if (!session) {
                 return ErrorResponse(api, QHttpServerResponse::StatusCode::InternalServerError,
                                      QStringLiteral("Could not allocate character ID"));
             }
 
-            const int languageId = body->value(QStringLiteral("LanguageId")).toInt();
             const QJsonObject response =
                 Bloodborne::BuildLoginResponse(identity->userId, languageId, session->sessionId);
             qInfo().noquote()
@@ -287,10 +354,13 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    const auto body = ParseRequest(request);
                    TraceRequest(api, request, body);
                    if (!body || !HasMessageId(*body, "ServerTimeGetRequest") ||
-                       !runtime->ValidateSession(*body, request)) {
+                       !HasSessionFields(*body)) {
                        return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest,
                                             QStringLiteral("Invalid ServerTimeGetRequest"));
                    }
+                   if (!runtime->ValidateSession(*body, request))
+                       return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                                            QStringLiteral("Unknown Bloodborne session"));
                    return JsonResponse(api, Bloodborne::BuildServerTimeResponse());
                });
 
@@ -300,12 +370,14 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
             const QString api = QStringLiteral("SyncCharaId");
             const auto body = ParseRequest(request);
             TraceRequest(api, request, body);
-            const auto session = body ? runtime->ValidateSession(*body, request) : std::nullopt;
-            if (!body || !session || !HasMessageId(*body, "SyncCharaIdRequest") ||
+            if (!body || !HasMessageId(*body, "SyncCharaIdRequest") || !HasSessionFields(*body) ||
                 !HasNumber(*body, "CharaIdNum")) {
                 return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest,
                                      QStringLiteral("Invalid SyncCharaIdRequest"));
             }
+            if (!runtime->ValidateSession(*body, request))
+                return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                                     QStringLiteral("Unknown Bloodborne session"));
 
             const int count = body->value(QStringLiteral("CharaIdNum")).toInt();
             if (count <= 0 || count > 16) {
@@ -326,12 +398,15 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    const QString api = QStringLiteral("NoticeNormalGet");
                    const auto body = ParseRequest(request);
                    TraceRequest(api, request, body);
-                   if (!body || !runtime->ValidateSession(*body, request) ||
-                       !HasMessageId(*body, "NoticeNormalGetRequest") ||
-                       !HasNumber(*body, "Language") || !HasNumber(*body, "Region")) {
+                   if (!body || !HasMessageId(*body, "NoticeNormalGetRequest") ||
+                       !HasSessionFields(*body) || !HasNumber(*body, "Language") ||
+                       !HasNumber(*body, "Region")) {
                        return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest,
                                             QStringLiteral("Invalid NoticeNormalGetRequest"));
                    }
+                   if (!runtime->ValidateSession(*body, request))
+                       return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                                            QStringLiteral("Unknown Bloodborne session"));
                    return JsonResponse(api, Bloodborne::BuildNoticeNormalResponse());
                });
 
@@ -340,16 +415,138 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    const QString api = QStringLiteral("NoticeEmergencyGet");
                    const auto body = ParseRequest(request);
                    TraceRequest(api, request, body);
-                   if (!body || !runtime->ValidateSession(*body, request) ||
-                       !HasMessageId(*body, "NoticeEmergencyGetRequest") ||
-                       !HasNumber(*body, "Language") || !HasNumber(*body, "Region") ||
-                       !HasString(*body, "CheckTime")) {
+                   if (!body || !HasMessageId(*body, "NoticeEmergencyGetRequest") ||
+                       !HasSessionFields(*body) || !HasNumber(*body, "Language") ||
+                       !HasNumber(*body, "Region") || !HasString(*body, "CheckTime")) {
                        return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest,
                                             QStringLiteral("Invalid NoticeEmergencyGetRequest"));
                    }
-                   const QString checkTime = QDateTime::currentDateTimeUtc().toString(
-                       QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+                   if (!runtime->ValidateSession(*body, request))
+                       return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                                            QStringLiteral("Unknown Bloodborne session"));
+                   const QString checkTime = body->value(QStringLiteral("CheckTime")).toString();
                    return JsonResponse(api, Bloodborne::BuildNoticeEmergencyResponse(checkTime));
+               });
+
+    http.route("/penalty/check_user_priority_move_count", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("UserPropertiesMoveCountCheck"),
+                       "UserPropertiesMoveCountCheckRequest", request,
+                       [](const QJsonObject& body) { return HasNumber(body, "Count"); },
+                       [](const QJsonObject&) {
+                           return SuccessResponse("UserPropertiesMoveCountCheckResponse");
+                       });
+               });
+
+    http.route(
+        "/blood_messenger/exist_messages", QHttpServerRequest::Method::Post,
+        [runtime](const QHttpServerRequest& request) {
+            return HandleSessionEndpoint(
+                runtime, QStringLiteral("BloodMessSearchAdd"), "BloodMessSearchAddRequest", request,
+                [](const QJsonObject& body) {
+                    return HasArray(body, "BloodMessIdList") && HasNumber(body, "CharaId");
+                },
+                [](const QJsonObject&) {
+                    return EmptyListResponse("BloodMessSearchAddResponse",
+                                             {"BloodMessEvaluationList", "LostBloodMessIdList"});
+                });
+        });
+
+    http.route(
+        "/messenger_shell/upload", QHttpServerRequest::Method::Post,
+        [runtime](const QHttpServerRequest& request) {
+            return HandleSessionEndpoint(
+                runtime, QStringLiteral("MessengerShellUpload"), "MessengerShellUploadRequest",
+                request,
+                [](const QJsonObject& body) {
+                    return HasNumber(body, "CharaId") && HasString(body, "ShellData") &&
+                           HasNumber(body, "ShellDataVersion");
+                },
+                [](const QJsonObject&) { return SuccessResponse("MessengerShellUploadResponse"); });
+        });
+
+    http.route(
+        "/wandering_ghost/get", QHttpServerRequest::Method::Post,
+        [runtime](const QHttpServerRequest& request) {
+            return HandleSessionEndpoint(
+                runtime, QStringLiteral("WanderingGhostGet"), "WanderingGhostGetRequest", request,
+                [](const QJsonObject& body) {
+                    return HasArray(body, "AreaList") && HasNumber(body, "GetMaxCount") &&
+                           HasArray(body, "JoinedCharaIdList") &&
+                           HasNumber(body, "MatchingLevel") &&
+                           HasNumber(body, "WanderingGhostDataVersion");
+                },
+                [](const QJsonObject&) {
+                    return EmptyListResponse("WanderingGhostGetResponse", {"WanderingGhostList"});
+                });
+        });
+
+    http.route("/chair_messenger/get", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("ChairMessGetList"), "ChairMessGetListRequest",
+                       request,
+                       [](const QJsonObject& body) {
+                           return HasNumber(body, "CharaId") && HasArray(body, "WarpInfoList");
+                       },
+                       [](const QJsonObject&) {
+                           return EmptyListResponse("ChairMessGetListResponse", {"ChairMessList"});
+                       });
+               });
+
+    http.route("/channel/get_info", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("ChannelGetInfo"), "ChannelGetInfoRequest", request,
+                       [](const QJsonObject& body) { return HasArray(body, "ChannelIdList"); },
+                       [](const QJsonObject&) {
+                           return EmptyListResponse("ChannelGetInfoResponse",
+                                                    {"ChannelInfoList", "LostChannelIdList"});
+                       });
+               });
+
+    http.route("/blood_messenger/evaluation", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("BloodMessGetEvaluate"),
+                       "BloodMessGetEvaluateRequest", request,
+                       [](const QJsonObject& body) { return HasArray(body, "BloodMessIdList"); },
+                       [](const QJsonObject&) {
+                           return EmptyListResponse("BloodMessGetEvaluateResponse",
+                                                    {"BloodMessEvaluationList"});
+                       });
+               });
+
+    http.route(
+        "/blood_messenger/message_area", QHttpServerRequest::Method::Post,
+        [runtime](const QHttpServerRequest& request) {
+            return HandleSessionEndpoint(
+                runtime, QStringLiteral("BloodMessGetList"), "BloodMessGetListRequest", request,
+                [](const QJsonObject& body) {
+                    return HasArray(body, "AreaInfoList") && HasNumber(body, "BloodDataVersion") &&
+                           HasNumber(body, "CharaDataVersion") && HasNumber(body, "GetMaxCount") &&
+                           HasNumber(body, "MessShellInfoVersion");
+                },
+                [](const QJsonObject&) {
+                    return EmptyListResponse("BloodMessGetListResponse", {"BloodMessList"});
+                });
+        });
+
+    http.route("/tomb_messenger/message_area", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("TombMessGetList"), "TombMessGetListRequest",
+                       request,
+                       [](const QJsonObject& body) {
+                           return HasArray(body, "AreaInfoList") &&
+                                  HasNumber(body, "GetMaxCount") &&
+                                  HasNumber(body, "MessShellInfoVersion") &&
+                                  HasNumber(body, "TombDataVersion");
+                       },
+                       [](const QJsonObject&) {
+                           return EmptyListResponse("TombMessGetListResponse", {"TombMessList"});
+                       });
                });
 
     qInfo().noquote() << "Bloodborne bootstrap routes registered; public base URL" << publicBaseUrl;

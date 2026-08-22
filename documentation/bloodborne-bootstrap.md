@@ -26,8 +26,9 @@ Optional request/response logging is enabled with:
 SHADNET_BLOODBORNE_BOOTSTRAP_TRACE=1
 ```
 
-`AuthorizationCode`, passwords, tokens, and secrets are redacted. The existing summon trace and
-seamless co-op settings are unchanged.
+The local trace prints only API, user, method, path, status, and `ResKind`. It never prints
+`AuthorizationCode` or complete game data. Recognized blob fields are represented only by byte
+count and SHA-256. The existing summon trace and seamless co-op settings are unchanged.
 
 ## Temporary reference proxy
 
@@ -91,7 +92,8 @@ value is `2`, so the required container is `gameurl2`; there is no `+1` conversi
 locates both container boundaries and checks every API opening and closing tag inside that range.
 Any missing API tag makes the complete parse fail.
 
-The response starts with:
+The HTTP response body is Base64. Bloodborne decodes it before parsing; the decoded XML starts
+with:
 
 ```xml
 <ss>0</ss>
@@ -194,6 +196,7 @@ a unique session UUID, and reports application/server version `6`:
 
 ```json
 {
+  "MessageId": "LoginResponse",
   "ResKind": 0,
   "UserId": 1,
   "UserStatus": 0,
@@ -203,8 +206,7 @@ a unique session UUID, and reports application/server version `6`:
 }
 ```
 
-No response `MessageId` is emitted: this executable never looks up `MessageId` while parsing a
-response.
+The local response also includes the demonstrated `"MessageId":"LoginResponse"`.
 
 ### ServerTimeGet
 
@@ -228,14 +230,43 @@ request contains `Language`, `Region`, and the common session fields. The respon
 `NoticeList` to be an array; an empty array follows its valid zero-item path:
 
 ```json
-{"ResKind":0,"NoticeList":[]}
+{"MessageId":"NoticeNormalGetResponse","NoticeList":[],"ResKind":0}
 ```
 
 ### NoticeEmergencyGet
 
 The next demonstrated request uses API index `4` and sends `Language`, `Region`, and `CheckTime`.
 The response parser reads `CheckTime` using the demonstrated `yyyy-MM-ddTHH:mm:ss` format and a
-`NoticeList` array. shadNet returns current UTC server time and an empty list.
+`NoticeList` array. shadNet copies `CheckTime` from the request and returns an empty list.
+
+```json
+{"CheckTime":"request value","MessageId":"NoticeEmergencyGetResponse","NoticeList":[],"ResKind":0}
+```
+
+## Local minimum Online endpoints
+
+With `BloodborneReferenceProxyEnabled=false`, shadNet serves the accepted local Login and these
+captured bootstrap/keepalive contracts:
+
+- `POST /basic_utils/get_normal_notice`
+- `POST /basic_utils/get_emergency_notice`
+- `POST /penalty/check_user_priority_move_count`
+- `POST /blood_messenger/exist_messages`
+- `POST /messenger_shell/upload`
+- `POST /wandering_ghost/get`
+- `POST /chair_messenger/get`
+- `POST /channel/get_info`
+- `POST /blood_messenger/evaluation`
+- `POST /blood_messenger/message_area`
+- `POST /tomb_messenger/message_area`
+
+The message/ghost/chair/channel/tomb list routes deliberately return demonstrated empty-list
+success responses; persistence is not implemented. Every endpoint validates the `UserId` and
+`SessionId` created by local Login. The four `/summon_messenger/*` endpoints are not part of this
+bootstrap handler and remain owned by the existing `Bloodborne::SummonBroker`.
+
+Unknown Bloodborne backend paths return HTTP 404 and emit `[BLOODBORNE LOCAL UNIMPLEMENTED]`;
+they are never treated as success automatically.
 
 ### SyncCharaId
 
@@ -261,21 +292,23 @@ slot return the same ID. That ID is then used by the existing summon request bod
 
 ## API scope classification
 
-This is a static, goal-oriented classification, not a claim that every optional feature has been
-dynamically exercised:
+This is a goal-oriented classification based on the captured successful Online session:
 
-- A — bootstrap/Online: Login, NoticeNormalGet, NoticeEmergencyGet, SyncCharaId.
-- B — safe minimal empty response: NoticeNormalGet and NoticeEmergencyGet, already included in A.
-- C — optional feature services: all BloodMess, Channel, MessengerShell, ChairMess, TombMess,
-  DeathVision, and WanderingGhost APIs.
+- A — bootstrap/Online: Login, NoticeNormalGet, NoticeEmergencyGet, SyncCharaId, and
+  UserPropertiesMoveCountCheck.
+- B — captured keepalive/optional calls with demonstrated minimal responses: BloodMessSearchAdd,
+  MessengerShellUpload, WanderingGhostGet, ChairMessGetList, ChannelGetInfo,
+  BloodMessGetEvaluate, BloodMessGetList, and TombMessGetList.
+- C — optional feature services not implemented in this phase: create/evaluate/remove messages,
+  DeathVision, persistent ghosts/chairs, full channels/chalices, and UserAgreement.
 - D — co-op: SummonDataCreate, SummonDataGetList, SummonDataRemove, SummonDataSummon. These already
   use the existing summon broker.
-- E — not required by the demonstrated CUSA03173 startup path: ServerTimeGet, UserAgreementGet,
-  MultiPlayNetError, UserPropertiesMoveCount, and UserPropertiesMoveCountCheck.
+- E — not required by the demonstrated CUSA03173 startup path: ServerTimeGet,
+  MultiPlayNetError, and UserPropertiesMoveCount.
 
-Only A and D are in scope for reaching Online and ringing bells. Category C endpoints remain
-published in `ss.info` because the parser requires all tags, but shadNet does not pretend to
-implement their protocols.
+Only the captured A/B contracts and D are implemented for this phase. Category C endpoints remain
+published in `ss.info` because the parser requires all tags, but unknown calls return HTTP 404 and
+the explicit local-unimplemented diagnostic.
 
 ## Expected incremental test
 
@@ -283,7 +316,7 @@ With tracing enabled, the first bootstrap line is the `ss.info` GET. If its pars
 next important line must be:
 
 ```text
-[BLOODBORNE BOOTSTRAP REQUEST] api=Login method=POST path=/basic_utils/login
+[BLOODBORNE LOCAL REQUEST] api=Login user_id=0 method=POST path=/basic_utils/login
 ```
 
 After a valid Login response, the next demonstrated endpoint is

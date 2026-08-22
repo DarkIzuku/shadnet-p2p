@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include <QUrl>
 #include <webapi_routes_users.h>
+#include "bloodborne_bootstrap.h"
 #include "bloodborne_reference_proxy.h"
 #include "bloodborne_ssinfo_reference.h"
 #include "webapi_auth.h"
@@ -21,6 +22,25 @@
 #include "webapi_routes_presence.h"
 #include "webapi_routes_profile.h"
 #include "webapi_routes_session.h"
+
+namespace {
+
+QString MethodName(QHttpServerRequest::Method method) {
+    switch (method) {
+    case QHttpServerRequest::Method::Get:
+        return QStringLiteral("GET");
+    case QHttpServerRequest::Method::Post:
+        return QStringLiteral("POST");
+    case QHttpServerRequest::Method::Put:
+        return QStringLiteral("PUT");
+    case QHttpServerRequest::Method::Delete:
+        return QStringLiteral("DELETE");
+    default:
+        return QString::number(static_cast<int>(method));
+    }
+}
+
+} // namespace
 
 WebApiServer::WebApiServer(QObject* parent) : QObject(parent) {}
 WebApiServer::~WebApiServer() = default;
@@ -51,15 +71,31 @@ bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedSta
 
         QString validationError;
         QByteArray decodedXml;
-        if (!Bloodborne::ValidateReferenceServerStatusInfo(&validationError, &decodedXml)) {
-            qCritical().noquote() << "Bloodborne bootstrap reference ss.info validation failed:"
-                                  << validationError;
-            return false;
+        if (m_config->IsBloodborneReferenceProxyEnabled()) {
+            if (!Bloodborne::ValidateReferenceServerStatusInfo(&validationError, &decodedXml)) {
+                qCritical().noquote() << "Bloodborne bootstrap reference ss.info validation failed:"
+                                      << validationError;
+                return false;
+            }
+            m_bloodborneServerStatusInfo = Bloodborne::ReferenceServerStatusInfo();
+            qInfo().nospace().noquote()
+                << "Bloodborne bootstrap: serving reference Base64 ss.info bytes="
+                << m_bloodborneServerStatusInfo.size()
+                << " decoded_xml_bytes=" << decodedXml.size();
+        } else {
+            m_bloodborneServerStatusInfo = Bloodborne::BuildServerStatusInfo(
+                m_config->GetBloodbornePublicBaseUrl(), &decodedXml, &validationError);
+            if (m_bloodborneServerStatusInfo.isEmpty()) {
+                qCritical().noquote()
+                    << "Bloodborne bootstrap local ss.info generation failed:" << validationError;
+                return false;
+            }
+            qInfo().nospace().noquote()
+                << "Bloodborne bootstrap: serving local Base64 ss.info base="
+                << m_config->GetBloodbornePublicBaseUrl()
+                << " api_count=37 decoded_bytes=" << decodedXml.size()
+                << " encoded_bytes=" << m_bloodborneServerStatusInfo.size();
         }
-        qInfo().nospace().noquote()
-            << "Bloodborne bootstrap: serving reference Base64 ss.info bytes="
-            << Bloodborne::ReferenceServerStatusInfo().size()
-            << " decoded_xml_bytes=" << decodedXml.size();
 
         if (m_config->IsBloodborneReferenceProxyEnabled()) {
             const QUrl upstreamUrl(m_config->GetBloodborneReferenceProxyUrl());
@@ -136,7 +172,7 @@ void WebApiServer::RegisterRoutes() {
     if (m_config->IsBloodborneBootstrapEnabled()) {
         WebApiRoutes::RegisterBloodborneBootstrapRoutes(
             *m_http, *m_db, *m_shared, m_config->GetBloodbornePublicBaseUrl(),
-            m_config->IsBloodborneReferenceProxyEnabled());
+            m_bloodborneServerStatusInfo, m_config->IsBloodborneReferenceProxyEnabled());
     }
     WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled());
 
@@ -146,6 +182,15 @@ void WebApiServer::RegisterRoutes() {
                 Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {
                 m_bloodborneReferenceProxy->Forward(req, std::move(responder));
                 return;
+            }
+
+            if (m_config->IsBloodborneBootstrapEnabled() &&
+                !m_config->IsBloodborneReferenceProxyEnabled() &&
+                Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {
+                qWarning().noquote()
+                    << "[BLOODBORNE LOCAL UNIMPLEMENTED]"
+                    << "method=" + MethodName(req.method()) << "path=" + req.url().path()
+                    << "query=" + req.url().query(QUrl::FullyEncoded);
             }
 
             qWarning() << "WebAPI: unhandled" << req.method() << req.url().path()

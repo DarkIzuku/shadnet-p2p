@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 
 class Database;
@@ -12,6 +13,7 @@ namespace WebApiRoutes {
 
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
                                        const QString& publicBaseUrl,
+                                       const QByteArray& serverStatusInfo,
                                        bool referenceProxyEnabled = false);
 
 } // namespace WebApiRoutes

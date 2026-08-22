@@ -3,6 +3,7 @@
 #pragma once
 
 #include <memory>
+#include <QByteArray>
 #include <QHttpServer>
 #include <QObject>
 #include <QString>
@@ -32,5 +33,6 @@ private:
     std::unique_ptr<QTcpServer> m_tcp;
     std::unique_ptr<Database> m_db;
     std::unique_ptr<Bloodborne::ReferenceProxy> m_bloodborneReferenceProxy;
+    QByteArray m_bloodborneServerStatusInfo;
     SharedState* m_shared = nullptr;
 };
