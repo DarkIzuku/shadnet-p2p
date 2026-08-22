@@ -7,6 +7,7 @@
 #include <QAtomicInt>
 #include <QByteArray>
 #include <QHash>
+#include <QHostAddress>
 #include <QList>
 #include <QObject>
 #include <QPair>
@@ -33,6 +34,7 @@ struct SharedState {
     mutable QReadWriteLock clientsLock;
     struct ClientEntry {
         QString npid;
+        QHostAddress peerAddress;
         std::function<void(QByteArray)> send;
         std::function<void(uint64_t)> resetMatchingRoomState;
         uint32_t matchingContextId = 0;

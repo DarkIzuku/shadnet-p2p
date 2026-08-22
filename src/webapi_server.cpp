@@ -9,9 +9,11 @@
 #include <QHttpServerResponse>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrl>
 #include <webapi_routes_users.h>
 #include "webapi_auth.h"
 #include "webapi_routes_bloodborne.h"
+#include "webapi_routes_bloodborne_bootstrap.h"
 #include "webapi_routes_presence.h"
 #include "webapi_routes_profile.h"
 #include "webapi_routes_session.h"
@@ -22,6 +24,21 @@ WebApiServer::~WebApiServer() = default;
 bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedState* shared) {
     m_config = config;
     m_shared = shared;
+
+    if (m_config->IsBloodborneBootstrapEnabled()) {
+        const QUrl publicUrl(m_config->GetBloodbornePublicBaseUrl());
+        if (!publicUrl.isValid() || publicUrl.host().isEmpty() ||
+            (publicUrl.scheme() != QStringLiteral("http") &&
+             publicUrl.scheme() != QStringLiteral("https")) ||
+            (!publicUrl.path().isEmpty() && publicUrl.path() != QStringLiteral("/")) ||
+            !publicUrl.query().isEmpty() || !publicUrl.fragment().isEmpty()) {
+            qCritical().noquote()
+                << "Bloodborne bootstrap is enabled, but BloodbornePublicBaseUrl is not a valid "
+                   "http(s) base URL:"
+                << m_config->GetBloodbornePublicBaseUrl();
+            return false;
+        }
+    }
 
     m_db = std::make_unique<Database>(QStringLiteral("webapi_main"));
     if (!m_db->Open(dbPath)) {
@@ -66,6 +83,10 @@ void WebApiServer::RegisterRoutes() {
     WebApiRoutes::RegisterProfileRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);
+    if (m_config->IsBloodborneBootstrapEnabled()) {
+        WebApiRoutes::RegisterBloodborneBootstrapRoutes(*m_http, *m_db, *m_shared,
+                                                        m_config->GetBloodbornePublicBaseUrl());
+    }
     WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled());
 
     m_http->setMissingHandler(

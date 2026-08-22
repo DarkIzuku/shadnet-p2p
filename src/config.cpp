@@ -52,6 +52,8 @@ void ConfigManager::Parse(const QString& path) {
     m_statsEnabled = boolean("StatsEnabled", true);
     m_matching2Enabled = boolean("Matching2Enabled", true);
     m_bloodborneSeamlessCoop = boolean("BloodborneSeamlessCoop", false);
+    m_bloodborneBootstrapEnabled = boolean("BloodborneBootstrapEnabled", false);
+    m_bloodbornePublicBaseUrl = str("BloodbornePublicBaseUrl", "").trimmed();
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();

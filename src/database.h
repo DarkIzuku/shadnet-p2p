@@ -88,6 +88,11 @@ public:
     // (left behind when GetNpCommId had no trophy/com id and returned blanks).
     void RunMaintenance();
 
+    // Bloodborne assigns publishable character IDs on the server. The game requests a
+    // count, not a client-side character fingerprint, so slots are stable per shadNet
+    // account and persisted in SQLite.
+    QList<qint64> GetOrCreateBloodborneCharaIds(qint64 userId, int count);
+
     // Friendship
     // Returns (status_caller, status_other). Empty = no row exists yet.
     enum class RelResult { Ok, Empty, Error };

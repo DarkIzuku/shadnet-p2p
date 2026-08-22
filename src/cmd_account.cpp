@@ -147,6 +147,7 @@ ErrorType ClientSession::CmdLogin(StreamExtractor& data, QByteArray& reply) {
         QWriteLocker lk(&m_shared->clientsLock);
         SharedState::ClientEntry entry;
         entry.npid = npid;
+        entry.peerAddress = m_socket->peerAddress();
         entry.appearOffline = req.appear_offline();
         // Title context reported by the emulator at login -> presence gameTitleInfo.
         entry.npTitleId = QString::fromStdString(req.title_id());

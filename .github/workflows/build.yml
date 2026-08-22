@@ -155,11 +155,18 @@ jobs:
     - name: Build
       run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --parallel $env:NUMBER_OF_PROCESSORS
 
+    - name: Build and run tests
+      run: |
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap --parallel $env:NUMBER_OF_PROCESSORS
+        ctest --test-dir ${{ github.workspace }}/build -C ${{ env.BUILD_TYPE }} --output-on-failure
+
     - name: Stage release
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force staging
         Copy-Item ${{ github.workspace }}/build/shadnet.exe staging/
+        Copy-Item ${{ github.workspace }}/build/worlds.cfg staging/
+        Copy-Item ${{ github.workspace }}/build/scoreboards.cfg staging/
         # Copies Qt6 DLLs, sqldrivers/qsqlite.dll, and VC runtime alongside the exe
         windeployqt6 --release --no-translations staging/shadnet.exe
 
@@ -231,8 +238,15 @@ jobs:
     - name: Build
       run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --parallel $(nproc)
 
+    - name: Build and run tests
+      run: |
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap --parallel $(nproc)
+        ctest --test-dir ${{ github.workspace }}/build --output-on-failure
+
     - name: Package
-      run: tar czf shadnet-linux64.tar.gz -C ${{ github.workspace }}/build shadnet
+      run: >
+        tar czf shadnet-linux64.tar.gz -C ${{ github.workspace }}/build
+        shadnet worlds.cfg scoreboards.cfg
 
     - name: Upload Linux artifact
       uses: actions/upload-artifact@v4

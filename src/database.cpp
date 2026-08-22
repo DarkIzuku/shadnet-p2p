@@ -188,10 +188,67 @@ bool Database::Migrate() {
     ins2.prepare("INSERT OR IGNORE INTO migration VALUES(2,'title_name mapping')");
     Exec(ins2);
 
+    QStringList stmts3 = {
+        "CREATE TABLE IF NOT EXISTS bloodborne_character("
+        "  chara_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  user_id  INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  slot     INTEGER NOT NULL,"
+        "  UNIQUE(user_id, slot))",
+    };
+
+    for (const QString& s : stmts3)
+        Exec(s);
+
+    QSqlQuery ins3(m_db);
+    ins3.prepare("INSERT OR IGNORE INTO migration VALUES(3,'Bloodborne character IDs')");
+    Exec(ins3);
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();
     return true;
+}
+
+QList<qint64> Database::GetOrCreateBloodborneCharaIds(qint64 userId, int count) {
+    QList<qint64> result;
+    if (userId <= 0 || count <= 0 || count > 16)
+        return result;
+
+    if (!m_db.transaction()) {
+        m_lastError = m_db.lastError().text();
+        return result;
+    }
+
+    for (int slot = 0; slot < count; ++slot) {
+        QSqlQuery insert(m_db);
+        insert.prepare(QStringLiteral(
+            "INSERT OR IGNORE INTO bloodborne_character(user_id, slot) VALUES(?, ?)"));
+        insert.addBindValue(userId);
+        insert.addBindValue(slot);
+        if (!insert.exec()) {
+            m_lastError = insert.lastError().text();
+            m_db.rollback();
+            return {};
+        }
+
+        QSqlQuery select(m_db);
+        select.prepare(
+            QStringLiteral("SELECT chara_id FROM bloodborne_character WHERE user_id=? AND slot=?"));
+        select.addBindValue(userId);
+        select.addBindValue(slot);
+        if (!select.exec() || !select.next()) {
+            m_lastError = select.lastError().text();
+            m_db.rollback();
+            return {};
+        }
+        result.append(select.value(0).toLongLong());
+    }
+
+    if (!m_db.commit()) {
+        m_lastError = m_db.lastError().text();
+        return {};
+    }
+    return result;
 }
 
 std::optional<DbError> Database::CreateAccount(const QString& npid, const QString& password,

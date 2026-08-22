@@ -83,8 +83,12 @@ set(SOURCES
     src/webapi_routes_session.cpp
     src/bloodborne_summon_broker.h
     src/bloodborne_summon_broker.cpp
+    src/bloodborne_bootstrap.h
+    src/bloodborne_bootstrap.cpp
     src/webapi_routes_bloodborne.h
     src/webapi_routes_bloodborne.cpp
+    src/webapi_routes_bloodborne_bootstrap.h
+    src/webapi_routes_bloodborne_bootstrap.cpp
     src/webapi_routes_common.h
     # Read-only stats HTTP/JSON listener
     src/stats_server.h
@@ -116,6 +120,15 @@ if(BUILD_TESTING)
     target_include_directories(test_bloodborne_summon_broker PRIVATE src)
     target_link_libraries(test_bloodborne_summon_broker PRIVATE Qt6::Core)
     add_test(NAME bloodborne_summon_broker COMMAND test_bloodborne_summon_broker)
+
+    add_executable(test_bloodborne_bootstrap EXCLUDE_FROM_ALL
+        tests/test_bloodborne_bootstrap.cpp
+        src/bloodborne_bootstrap.cpp
+        src/database.cpp
+    )
+    target_include_directories(test_bloodborne_bootstrap PRIVATE src)
+    target_link_libraries(test_bloodborne_bootstrap PRIVATE Qt6::Core Qt6::Sql)
+    add_test(NAME bloodborne_bootstrap COMMAND test_bloodborne_bootstrap)
 
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp

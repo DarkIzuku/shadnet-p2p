@@ -158,6 +158,8 @@ Matching2Enabled=true
 MatchingUdpPort=31314
 WebApiPort=31315
 BloodborneSeamlessCoop=false
+BloodborneBootstrapEnabled=true
+BloodbornePublicBaseUrl=http://100.101.102.103:31315
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```
@@ -320,10 +322,14 @@ folder:
 
 ```json
 {
-  "https://ss4.scej-network.jp:20443": "http://thehuntersdream.com",
-  "http://thehuntersdream.com:18671/summon_messenger": "http://100.101.102.103:31315"
+  "https://ss4.scej-network.jp:20443": "http://100.101.102.103:31315"
 }
 ```
+
+The private shadNet server now provides `/bb-eu/ss.info` and publishes the existing
+`/summon_messenger/*` routes directly, so no `thehuntersdream.com` override is needed. See
+[the Bloodborne bootstrap contract](documentation/bloodborne-bootstrap.md) for the demonstrated
+request/response formats and the incremental Online test sequence.
 
 The client README lists the exact Linux, Windows, macOS, and portable paths.
 
