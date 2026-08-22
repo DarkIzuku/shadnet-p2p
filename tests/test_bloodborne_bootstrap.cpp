@@ -192,7 +192,8 @@ int main(int argc, char *argv[]) {
                       QStringLiteral("izuku@example.test"),
                       QStringLiteral("token-one")));
 
-  SharedState shared{};
+  SharedState shared;
+  shared.config = nullptr;
   SharedState::ClientEntry client;
   client.npid = QStringLiteral("Izuku");
   client.peerAddress = QHostAddress::LocalHost;
