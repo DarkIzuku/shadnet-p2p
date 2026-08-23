@@ -100,8 +100,7 @@ bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedSta
         if (m_config->IsBloodborneWelcomeNoticeEnabled()) {
             qInfo().nospace().noquote()
                 << "Bloodborne welcome notice: enabled id=" << Bloodborne::WelcomeNoticeId
-                << " title_bytes="
-                << m_config->GetBloodborneWelcomeNoticeTitle().toUtf8().size()
+                << " title_bytes=" << m_config->GetBloodborneWelcomeNoticeTitle().toUtf8().size()
                 << " body_bytes=" << m_config->GetBloodborneWelcomeNoticeBody().toUtf8().size();
         } else {
             qInfo().noquote()

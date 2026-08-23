@@ -408,8 +408,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    if (!runtime->ValidateSession(*body, request))
                        return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
                                             QStringLiteral("Unknown Bloodborne session"));
-                   return JsonResponse(api,
-                                       Bloodborne::BuildNoticeNormalResponse(welcomeNotice));
+                   return JsonResponse(api, Bloodborne::BuildNoticeNormalResponse(welcomeNotice));
                });
 
     http.route("/basic_utils/get_emergency_notice", QHttpServerRequest::Method::Post,
