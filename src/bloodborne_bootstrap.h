@@ -25,11 +25,17 @@ struct WelcomeNotice {
     QString body;
 };
 
+struct WelcomeMessage {
+    bool enabled = false;
+    QString body;
+};
+
 const std::array<BootstrapApi, 37>& BootstrapApis();
 QByteArray BuildServerStatusInfo(const QString& publicBaseUrl, QByteArray* decodedXml = nullptr,
                                  QString* error = nullptr);
 
-QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId);
+QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId,
+                               const WelcomeMessage& welcomeMessage = WelcomeMessage{});
 QJsonObject BuildServerTimeResponse();
 QJsonObject BuildNoticeNormalResponse(const WelcomeNotice& welcomeNotice = WelcomeNotice{});
 QJsonObject BuildNoticeEmergencyResponse(const QString& checkTime);

@@ -36,6 +36,20 @@ When enabled, `/basic_utils/get_normal_notice` returns one item with the stable 
 reports whether the feature is enabled and the UTF-8 byte counts, but never logs the configured
 text. Set `BloodborneWelcomeNoticeEnabled=false` to preserve the original zero-item response.
 
+### Optional login welcome message
+
+Bloodborne may display the `WarningMessage` field from `LoginResponse` automatically. This
+independent test option is disabled by default:
+
+```ini
+BloodborneWelcomeMessageEnabled=false
+BloodborneWelcomeMessage=
+```
+
+When enabled with a non-empty message, shadNet encodes the complete UTF-8 text as standard
+Base64 and adds it as `WarningMessage`. It does not alter the normal notice configuration or
+response. Startup logging reports only the plain and encoded byte counts, never the text.
+
 Optional request/response logging is enabled with:
 
 ```text

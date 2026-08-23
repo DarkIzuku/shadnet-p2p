@@ -185,6 +185,40 @@ int main(int argc, char *argv[]) {
   CHECK(loginBuilder.value(QStringLiteral("ResKind")).toInt(-1) == 0);
   CHECK(loginBuilder.value(QStringLiteral("SessionId")).toString() ==
         QStringLiteral("session-42"));
+  CHECK(!loginBuilder.contains(QStringLiteral("WarningMessage")));
+
+  const QString asciiWelcome =
+      QStringLiteral("Simulador de ser un cazador malote. Like y Subscribete");
+  Bloodborne::WelcomeMessage disabledWelcomeMessage;
+  disabledWelcomeMessage.body = asciiWelcome;
+  const QJsonObject disabledWelcomeLogin = Bloodborne::BuildLoginResponse(
+      42, 4, QStringLiteral("session-42"), disabledWelcomeMessage);
+  CHECK(!disabledWelcomeLogin.contains(QStringLiteral("WarningMessage")));
+  CHECK(disabledWelcomeLogin == loginBuilder);
+
+  Bloodborne::WelcomeMessage enabledWelcomeMessage;
+  enabledWelcomeMessage.enabled = true;
+  enabledWelcomeMessage.body = asciiWelcome;
+  const QJsonObject enabledWelcomeLogin = Bloodborne::BuildLoginResponse(
+      42, 4, QStringLiteral("session-42"), enabledWelcomeMessage);
+  CHECK(
+      enabledWelcomeLogin.value(QStringLiteral("WarningMessage")).toString() ==
+      QStringLiteral("U2ltdWxhZG9yIGRlIHNlciB1biBjYXphZG9yIG1hbG90ZS4g"
+                     "TGlrZSB5IFN1YnNjcmliZXRl"));
+  QJsonObject enabledWelcomeFields = enabledWelcomeLogin;
+  enabledWelcomeFields.remove(QStringLiteral("WarningMessage"));
+  CHECK(enabledWelcomeFields == loginBuilder);
+
+  Bloodborne::WelcomeMessage utf8WelcomeMessage;
+  utf8WelcomeMessage.enabled = true;
+  utf8WelcomeMessage.body =
+      QStringLiteral("Bienvenidos, cazadores. ¡Buena cacería!");
+  const QJsonObject utf8WelcomeLogin = Bloodborne::BuildLoginResponse(
+      42, 4, QStringLiteral("session-42"), utf8WelcomeMessage);
+  CHECK(QByteArray::fromBase64(
+            utf8WelcomeLogin.value(QStringLiteral("WarningMessage"))
+                .toString()
+                .toLatin1()) == utf8WelcomeMessage.body.toUtf8());
 
   const QJsonObject disabledNotice = Bloodborne::BuildNoticeNormalResponse();
   CHECK(disabledNotice.value(QStringLiteral("MessageId")).toString() ==
@@ -202,14 +236,16 @@ int main(int argc, char *argv[]) {
       enabledNotice.value(QStringLiteral("NoticeList")).toArray();
   CHECK(enabledNotices.size() == 1);
   const QJsonObject enabledNoticeItem = enabledNotices.at(0).toObject();
-  CHECK(enabledNoticeItem.value(QStringLiteral("Id")).toVariant().toLongLong() ==
-        Bloodborne::WelcomeNoticeId);
-  CHECK(QByteArray::fromBase64(
-            enabledNoticeItem.value(QStringLiteral("Title")).toString().toLatin1()) ==
+  CHECK(
+      enabledNoticeItem.value(QStringLiteral("Id")).toVariant().toLongLong() ==
+      Bloodborne::WelcomeNoticeId);
+  CHECK(QByteArray::fromBase64(enabledNoticeItem.value(QStringLiteral("Title"))
+                                   .toString()
+                                   .toLatin1()) ==
         welcomeNotice.title.toUtf8());
-  CHECK(QByteArray::fromBase64(
-            enabledNoticeItem.value(QStringLiteral("Notice")).toString().toLatin1()) ==
-        welcomeNotice.body.toUtf8());
+  CHECK(QByteArray::fromBase64(enabledNoticeItem.value(QStringLiteral("Notice"))
+                                   .toString()
+                                   .toLatin1()) == welcomeNotice.body.toUtf8());
 
   QTemporaryDir directory;
   CHECK(directory.isValid());
@@ -223,6 +259,8 @@ int main(int argc, char *argv[]) {
         QStringLiteral("The Hunter's Dream"));
   CHECK(defaultConfig.GetBloodborneWelcomeNoticeBody() ==
         QStringLiteral("Welcome to the private Bloodborne server."));
+  CHECK(!defaultConfig.IsBloodborneWelcomeMessageEnabled());
+  CHECK(defaultConfig.GetBloodborneWelcomeMessage().isEmpty());
 
   const QString configuredPath =
       directory.filePath(QStringLiteral("configured-shadnet.cfg"));
@@ -233,6 +271,8 @@ int main(int argc, char *argv[]) {
                       welcomeNotice.title);
     settings.setValue(QStringLiteral("BloodborneWelcomeNoticeBody"),
                       welcomeNotice.body);
+    settings.setValue(QStringLiteral("BloodborneWelcomeMessageEnabled"), true);
+    settings.setValue(QStringLiteral("BloodborneWelcomeMessage"), asciiWelcome);
     settings.sync();
   }
   ConfigManager configured;
@@ -240,6 +280,8 @@ int main(int argc, char *argv[]) {
   CHECK(configured.IsBloodborneWelcomeNoticeEnabled());
   CHECK(configured.GetBloodborneWelcomeNoticeTitle() == welcomeNotice.title);
   CHECK(configured.GetBloodborneWelcomeNoticeBody() == welcomeNotice.body);
+  CHECK(configured.IsBloodborneWelcomeMessageEnabled());
+  CHECK(configured.GetBloodborneWelcomeMessage() == asciiWelcome);
 
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));
@@ -256,9 +298,9 @@ int main(int argc, char *argv[]) {
   shared.npidToUserId.insert(QStringLiteral("Izuku"), 1);
 
   QHttpServer http;
-  WebApiRoutes::RegisterBloodborneBootstrapRoutes(http, db, shared, baseUrl,
-                                                  encodedLocal, false,
-                                                  welcomeNotice);
+  WebApiRoutes::RegisterBloodborneBootstrapRoutes(
+      http, db, shared, baseUrl, encodedLocal, false, welcomeNotice,
+      enabledWelcomeMessage);
   WebApiRoutes::RegisterBloodborneRoutes(http, false);
   QTcpServer tcp;
   CHECK(tcp.listen(QHostAddress::LocalHost, 0));
@@ -292,6 +334,9 @@ int main(int argc, char *argv[]) {
         QStringLiteral("LoginResponse"));
   CHECK(login.value(QStringLiteral("ResKind")).toInt(-1) == 0);
   CHECK(login.value(QStringLiteral("UserId")).toVariant().toLongLong() == 1);
+  CHECK(login.value(QStringLiteral("WarningMessage")).toString() ==
+        QStringLiteral("U2ltdWxhZG9yIGRlIHNlciB1biBjYXphZG9yIG1hbG90ZS4g"
+                       "TGlrZSB5IFN1YnNjcmliZXRl"));
   const QString sessionId = login.value(QStringLiteral("SessionId")).toString();
   CHECK(!sessionId.isEmpty());
 

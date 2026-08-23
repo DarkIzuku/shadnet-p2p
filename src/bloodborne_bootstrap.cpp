@@ -273,7 +273,8 @@ QByteArray BuildServerStatusInfo(const QString& publicBaseUrl, QByteArray* decod
     return encoded;
 }
 
-QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId) {
+QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId,
+                               const WelcomeMessage& welcomeMessage) {
     QJsonObject body;
     body.insert(QStringLiteral("MessageId"), QStringLiteral("LoginResponse"));
     body.insert(QStringLiteral("ResKind"), 0);
@@ -282,6 +283,10 @@ QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& ses
     body.insert(QStringLiteral("LanguageId"), languageId);
     body.insert(QStringLiteral("SessionId"), sessionId);
     body.insert(QStringLiteral("ServerVersion"), 6);
+    if (welcomeMessage.enabled && !welcomeMessage.body.isEmpty()) {
+        body.insert(QStringLiteral("WarningMessage"),
+                    QString::fromLatin1(welcomeMessage.body.toUtf8().toBase64()));
+    }
     return body;
 }
 

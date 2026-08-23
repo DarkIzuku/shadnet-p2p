@@ -165,6 +165,8 @@ BloodborneReferenceProxyUrl=http://thehuntersdream.com:18671
 BloodborneWelcomeNoticeEnabled=true
 BloodborneWelcomeNoticeTitle=The Hunter's Dream
 BloodborneWelcomeNoticeBody=Welcome to the private Bloodborne server.
+BloodborneWelcomeMessageEnabled=false
+BloodborneWelcomeMessage=
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

@@ -287,7 +287,8 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                                        const QString& publicBaseUrl,
                                        const QByteArray& serverStatusInfo,
                                        bool referenceProxyEnabled,
-                                       const Bloodborne::WelcomeNotice& welcomeNotice) {
+                                       const Bloodborne::WelcomeNotice& welcomeNotice,
+                                       const Bloodborne::WelcomeMessage& welcomeMessage) {
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
                [serverStatusInfo](const QHttpServerRequest& request) {
                    TraceRequest(QStringLiteral("ss.info"), request);
@@ -307,7 +308,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
 
     http.route(
         "/basic_utils/login", QHttpServerRequest::Method::Post,
-        [runtime](const QHttpServerRequest& request) {
+        [runtime, welcomeMessage](const QHttpServerRequest& request) {
             const QString api = QStringLiteral("Login");
             const auto body = ParseRequest(request);
             TraceRequest(api, request, body);
@@ -338,8 +339,8 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                                      QStringLiteral("Could not allocate character ID"));
             }
 
-            const QJsonObject response =
-                Bloodborne::BuildLoginResponse(identity->userId, languageId, session->sessionId);
+            const QJsonObject response = Bloodborne::BuildLoginResponse(
+                identity->userId, languageId, session->sessionId, welcomeMessage);
             qInfo().noquote()
                 << QStringLiteral(
                        "Bloodborne bootstrap: Login successful user=%1 user_id=%2 chara_id=%3")
