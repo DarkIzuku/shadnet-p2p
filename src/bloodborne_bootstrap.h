@@ -12,10 +12,17 @@
 namespace Bloodborne {
 
 inline constexpr char ServerStatusInfoContentType[] = "text/plain; charset=utf-8";
+inline constexpr qint64 WelcomeNoticeId = 1;
 
 struct BootstrapApi {
     const char* name;
     const char* path;
+};
+
+struct WelcomeNotice {
+    bool enabled = false;
+    QString title;
+    QString body;
 };
 
 const std::array<BootstrapApi, 37>& BootstrapApis();
@@ -24,7 +31,7 @@ QByteArray BuildServerStatusInfo(const QString& publicBaseUrl, QByteArray* decod
 
 QJsonObject BuildLoginResponse(qint64 userId, int languageId, const QString& sessionId);
 QJsonObject BuildServerTimeResponse();
-QJsonObject BuildNoticeNormalResponse();
+QJsonObject BuildNoticeNormalResponse(const WelcomeNotice& welcomeNotice = WelcomeNotice{});
 QJsonObject BuildNoticeEmergencyResponse(const QString& checkTime);
 QJsonObject BuildSyncCharaIdResponse(const QList<qint64>& charaIds);
 

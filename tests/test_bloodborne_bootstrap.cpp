@@ -14,6 +14,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSettings>
 #include <QSqlQuery>
 #include <QTcpServer>
 #include <QTemporaryDir>
@@ -22,6 +23,7 @@
 #include "bloodborne_bootstrap.h"
 #include "bloodborne_ssinfo_reference.h"
 #include "client_session.h"
+#include "config.h"
 #include "database.h"
 #include "webapi_routes_bloodborne.h"
 #include "webapi_routes_bloodborne_bootstrap.h"
@@ -151,7 +153,7 @@ int main(int argc, char *argv[]) {
   CHECK(decodedReference.size() ==
         Bloodborne::ReferenceDecodedServerStatusInfoSize);
 
-  const QString baseUrl = QStringLiteral("http://73.244.12.22:31315");
+  const QString baseUrl = QStringLiteral("http://203.0.113.42:31315");
   QString localError;
   QByteArray decodedLocal;
   const QByteArray encodedLocal = Bloodborne::BuildServerStatusInfo(
@@ -184,8 +186,61 @@ int main(int argc, char *argv[]) {
   CHECK(loginBuilder.value(QStringLiteral("SessionId")).toString() ==
         QStringLiteral("session-42"));
 
+  const QJsonObject disabledNotice = Bloodborne::BuildNoticeNormalResponse();
+  CHECK(disabledNotice.value(QStringLiteral("MessageId")).toString() ==
+        QStringLiteral("NoticeNormalGetResponse"));
+  CHECK(disabledNotice.value(QStringLiteral("ResKind")).toInt(-1) == 0);
+  CHECK(disabledNotice.value(QStringLiteral("NoticeList")).toArray().isEmpty());
+
+  Bloodborne::WelcomeNotice welcomeNotice;
+  welcomeNotice.enabled = true;
+  welcomeNotice.title = QStringLiteral("Hunter's Dream — Bienvenidos");
+  welcomeNotice.body = QStringLiteral("Welcome, good hunter. ¡Buena caza!");
+  const QJsonObject enabledNotice =
+      Bloodborne::BuildNoticeNormalResponse(welcomeNotice);
+  const QJsonArray enabledNotices =
+      enabledNotice.value(QStringLiteral("NoticeList")).toArray();
+  CHECK(enabledNotices.size() == 1);
+  const QJsonObject enabledNoticeItem = enabledNotices.at(0).toObject();
+  CHECK(enabledNoticeItem.value(QStringLiteral("Id")).toVariant().toLongLong() ==
+        Bloodborne::WelcomeNoticeId);
+  CHECK(QByteArray::fromBase64(
+            enabledNoticeItem.value(QStringLiteral("Title")).toString().toLatin1()) ==
+        welcomeNotice.title.toUtf8());
+  CHECK(QByteArray::fromBase64(
+            enabledNoticeItem.value(QStringLiteral("Notice")).toString().toLatin1()) ==
+        welcomeNotice.body.toUtf8());
+
   QTemporaryDir directory;
   CHECK(directory.isValid());
+
+  const QString defaultConfigPath =
+      directory.filePath(QStringLiteral("default-shadnet.cfg"));
+  ConfigManager defaultConfig;
+  CHECK(defaultConfig.Load(defaultConfigPath));
+  CHECK(!defaultConfig.IsBloodborneWelcomeNoticeEnabled());
+  CHECK(defaultConfig.GetBloodborneWelcomeNoticeTitle() ==
+        QStringLiteral("The Hunter's Dream"));
+  CHECK(defaultConfig.GetBloodborneWelcomeNoticeBody() ==
+        QStringLiteral("Welcome to the private Bloodborne server."));
+
+  const QString configuredPath =
+      directory.filePath(QStringLiteral("configured-shadnet.cfg"));
+  {
+    QSettings settings(configuredPath, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("BloodborneWelcomeNoticeEnabled"), true);
+    settings.setValue(QStringLiteral("BloodborneWelcomeNoticeTitle"),
+                      welcomeNotice.title);
+    settings.setValue(QStringLiteral("BloodborneWelcomeNoticeBody"),
+                      welcomeNotice.body);
+    settings.sync();
+  }
+  ConfigManager configured;
+  CHECK(configured.Load(configuredPath));
+  CHECK(configured.IsBloodborneWelcomeNoticeEnabled());
+  CHECK(configured.GetBloodborneWelcomeNoticeTitle() == welcomeNotice.title);
+  CHECK(configured.GetBloodborneWelcomeNoticeBody() == welcomeNotice.body);
+
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));
   CHECK(InsertAccount(db, QStringLiteral("Izuku"),
@@ -202,7 +257,8 @@ int main(int argc, char *argv[]) {
 
   QHttpServer http;
   WebApiRoutes::RegisterBloodborneBootstrapRoutes(http, db, shared, baseUrl,
-                                                  encodedLocal, false);
+                                                  encodedLocal, false,
+                                                  welcomeNotice);
   WebApiRoutes::RegisterBloodborneRoutes(http, false);
   QTcpServer tcp;
   CHECK(tcp.listen(QHostAddress::LocalHost, 0));
@@ -243,9 +299,18 @@ int main(int argc, char *argv[]) {
       SessionRequest(QStringLiteral("NoticeNormalGetRequest"), 1, sessionId);
   notice.insert(QStringLiteral("Language"), 4);
   notice.insert(QStringLiteral("Region"), 2);
-  CHECK(IsSuccessful(
-      Post(tcp, QStringLiteral("/basic_utils/get_normal_notice"), notice),
-      QStringLiteral("NoticeNormalGetResponse"), {"NoticeList"}));
+  const HttpResult noticeResult =
+      Post(tcp, QStringLiteral("/basic_utils/get_normal_notice"), notice);
+  CHECK(noticeResult.finished);
+  CHECK(noticeResult.status == 200);
+  const QJsonObject noticeResponse = Object(noticeResult);
+  CHECK(noticeResponse.value(QStringLiteral("MessageId")).toString() ==
+        QStringLiteral("NoticeNormalGetResponse"));
+  CHECK(noticeResponse.value(QStringLiteral("ResKind")).toInt(-1) == 0);
+  const QJsonArray routeNotices =
+      noticeResponse.value(QStringLiteral("NoticeList")).toArray();
+  CHECK(routeNotices.size() == 1);
+  CHECK(routeNotices.at(0).toObject() == enabledNoticeItem);
 
   QJsonObject penalty = SessionRequest(
       QStringLiteral("UserPropertiesMoveCountCheckRequest"), 1, sessionId);

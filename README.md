@@ -162,6 +162,9 @@ BloodborneBootstrapEnabled=true
 BloodbornePublicBaseUrl=http://100.101.102.103:31315
 BloodborneReferenceProxyEnabled=false
 BloodborneReferenceProxyUrl=http://thehuntersdream.com:18671
+BloodborneWelcomeNoticeEnabled=true
+BloodborneWelcomeNoticeTitle=The Hunter's Dream
+BloodborneWelcomeNoticeBody=Welcome to the private Bloodborne server.
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

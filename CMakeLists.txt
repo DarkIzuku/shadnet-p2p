@@ -130,6 +130,7 @@ if(BUILD_TESTING)
         src/bloodborne_bootstrap.cpp
         src/bloodborne_ssinfo_reference.cpp
         src/bloodborne_summon_broker.cpp
+        src/config.cpp
         src/webapi_routes_bloodborne.cpp
         src/webapi_routes_bloodborne_bootstrap.cpp
         src/database.cpp

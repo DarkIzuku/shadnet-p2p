@@ -97,6 +97,17 @@ bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedSta
                 << " encoded_bytes=" << m_bloodborneServerStatusInfo.size();
         }
 
+        if (m_config->IsBloodborneWelcomeNoticeEnabled()) {
+            qInfo().nospace().noquote()
+                << "Bloodborne welcome notice: enabled id=" << Bloodborne::WelcomeNoticeId
+                << " title_bytes="
+                << m_config->GetBloodborneWelcomeNoticeTitle().toUtf8().size()
+                << " body_bytes=" << m_config->GetBloodborneWelcomeNoticeBody().toUtf8().size();
+        } else {
+            qInfo().noquote()
+                << "Bloodborne welcome notice: disabled; normal NoticeList remains empty";
+        }
+
         if (m_config->IsBloodborneReferenceProxyEnabled()) {
             const QUrl upstreamUrl(m_config->GetBloodborneReferenceProxyUrl());
             if (!upstreamUrl.isValid() || upstreamUrl.host().isEmpty() ||
@@ -170,9 +181,14 @@ void WebApiServer::RegisterRoutes() {
     WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);
     if (m_config->IsBloodborneBootstrapEnabled()) {
+        Bloodborne::WelcomeNotice welcomeNotice;
+        welcomeNotice.enabled = m_config->IsBloodborneWelcomeNoticeEnabled();
+        welcomeNotice.title = m_config->GetBloodborneWelcomeNoticeTitle();
+        welcomeNotice.body = m_config->GetBloodborneWelcomeNoticeBody();
         WebApiRoutes::RegisterBloodborneBootstrapRoutes(
             *m_http, *m_db, *m_shared, m_config->GetBloodbornePublicBaseUrl(),
-            m_bloodborneServerStatusInfo, m_config->IsBloodborneReferenceProxyEnabled());
+            m_bloodborneServerStatusInfo, m_config->IsBloodborneReferenceProxyEnabled(),
+            welcomeNotice);
     }
     WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled());
 

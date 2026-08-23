@@ -70,6 +70,18 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneReferenceProxyUrl;
     }
+    bool IsBloodborneWelcomeNoticeEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeNoticeEnabled;
+    }
+    QString GetBloodborneWelcomeNoticeTitle() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeNoticeTitle;
+    }
+    QString GetBloodborneWelcomeNoticeBody() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeNoticeBody;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -129,6 +141,9 @@ private:
     QString m_bloodbornePublicBaseUrl;
     bool m_bloodborneReferenceProxyEnabled = false;
     QString m_bloodborneReferenceProxyUrl = "http://thehuntersdream.com:18671";
+    bool m_bloodborneWelcomeNoticeEnabled = false;
+    QString m_bloodborneWelcomeNoticeTitle = "The Hunter's Dream";
+    QString m_bloodborneWelcomeNoticeBody = "Welcome to the private Bloodborne server.";
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

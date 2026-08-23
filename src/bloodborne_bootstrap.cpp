@@ -291,11 +291,22 @@ QJsonObject BuildServerTimeResponse() {
     return body;
 }
 
-QJsonObject BuildNoticeNormalResponse() {
+QJsonObject BuildNoticeNormalResponse(const WelcomeNotice& welcomeNotice) {
+    QJsonArray notices;
+    if (welcomeNotice.enabled) {
+        QJsonObject notice;
+        notice.insert(QStringLiteral("Id"), WelcomeNoticeId);
+        notice.insert(QStringLiteral("Title"),
+                      QString::fromLatin1(welcomeNotice.title.toUtf8().toBase64()));
+        notice.insert(QStringLiteral("Notice"),
+                      QString::fromLatin1(welcomeNotice.body.toUtf8().toBase64()));
+        notices.append(notice);
+    }
+
     QJsonObject body;
     body.insert(QStringLiteral("MessageId"), QStringLiteral("NoticeNormalGetResponse"));
     body.insert(QStringLiteral("ResKind"), 0);
-    body.insert(QStringLiteral("NoticeList"), QJsonArray{});
+    body.insert(QStringLiteral("NoticeList"), notices);
     return body;
 }
 

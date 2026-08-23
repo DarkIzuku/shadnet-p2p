@@ -20,6 +20,22 @@ BloodbornePublicBaseUrl=http://100.101.102.103:31315
 `0.0.0.0`, and do not include a path, query string, or fragment. Startup fails with a clear error
 if the bootstrap is enabled without a valid HTTP(S) URL.
 
+### Optional welcome notice
+
+The normal notice response remains empty by default. To show one welcome message after a
+successful Bloodborne login, add these values to `shadnet.cfg`:
+
+```ini
+BloodborneWelcomeNoticeEnabled=true
+BloodborneWelcomeNoticeTitle=The Hunter's Dream
+BloodborneWelcomeNoticeBody=Welcome to the private Bloodborne server.
+```
+
+When enabled, `/basic_utils/get_normal_notice` returns one item with the stable numeric `Id` `1`.
+`Title` and `Notice` are encoded as Base64 from their UTF-8 configuration values. Startup logging
+reports whether the feature is enabled and the UTF-8 byte counts, but never logs the configured
+text. Set `BloodborneWelcomeNoticeEnabled=false` to preserve the original zero-item response.
+
 Optional request/response logging is enabled with:
 
 ```text
@@ -227,10 +243,17 @@ contract, not as an API-index-1 response field.
 
 The real post-Login continuation first submits API index `3`, not ServerTimeGet or SyncCharaId. Its
 request contains `Language`, `Region`, and the common session fields. The response parser requires
-`NoticeList` to be an array; an empty array follows its valid zero-item path:
+`NoticeList` to be an array. With the optional welcome notice disabled (the default), an empty array
+follows its valid zero-item path:
 
 ```json
 {"MessageId":"NoticeNormalGetResponse","NoticeList":[],"ResKind":0}
+```
+
+With the welcome notice enabled, the same response contains exactly one compatible item:
+
+```json
+{"MessageId":"NoticeNormalGetResponse","NoticeList":[{"Id":1,"Notice":"BASE64_BODY","Title":"BASE64_TITLE"}],"ResKind":0}
 ```
 
 ### NoticeEmergencyGet

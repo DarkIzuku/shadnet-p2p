@@ -286,7 +286,8 @@ QHttpServerResponse HandleSessionEndpoint(const std::shared_ptr<BootstrapRuntime
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
                                        const QString& publicBaseUrl,
                                        const QByteArray& serverStatusInfo,
-                                       bool referenceProxyEnabled) {
+                                       bool referenceProxyEnabled,
+                                       const Bloodborne::WelcomeNotice& welcomeNotice) {
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
                [serverStatusInfo](const QHttpServerRequest& request) {
                    TraceRequest(QStringLiteral("ss.info"), request);
@@ -394,7 +395,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
         });
 
     http.route("/basic_utils/get_normal_notice", QHttpServerRequest::Method::Post,
-               [runtime](const QHttpServerRequest& request) {
+               [runtime, welcomeNotice](const QHttpServerRequest& request) {
                    const QString api = QStringLiteral("NoticeNormalGet");
                    const auto body = ParseRequest(request);
                    TraceRequest(api, request, body);
@@ -407,7 +408,8 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    if (!runtime->ValidateSession(*body, request))
                        return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
                                             QStringLiteral("Unknown Bloodborne session"));
-                   return JsonResponse(api, Bloodborne::BuildNoticeNormalResponse());
+                   return JsonResponse(api,
+                                       Bloodborne::BuildNoticeNormalResponse(welcomeNotice));
                });
 
     http.route("/basic_utils/get_emergency_notice", QHttpServerRequest::Method::Post,

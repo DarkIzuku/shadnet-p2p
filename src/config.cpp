@@ -57,6 +57,11 @@ void ConfigManager::Parse(const QString& path) {
     m_bloodborneReferenceProxyEnabled = boolean("BloodborneReferenceProxyEnabled", false);
     m_bloodborneReferenceProxyUrl =
         str("BloodborneReferenceProxyUrl", "http://thehuntersdream.com:18671").trimmed();
+    m_bloodborneWelcomeNoticeEnabled = boolean("BloodborneWelcomeNoticeEnabled", false);
+    m_bloodborneWelcomeNoticeTitle =
+        str("BloodborneWelcomeNoticeTitle", "The Hunter's Dream");
+    m_bloodborneWelcomeNoticeBody =
+        str("BloodborneWelcomeNoticeBody", "Welcome to the private Bloodborne server.");
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();
