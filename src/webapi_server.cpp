@@ -69,6 +69,12 @@ bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedSta
             return false;
         }
 
+        if (m_config->GetBloodborneGhostLifetimeSeconds() < 60 ||
+            m_config->GetBloodborneGhostLifetimeSeconds() > 604800) {
+            qCritical() << "BloodborneGhostLifetimeSeconds must be between 60 and 604800";
+            return false;
+        }
+
         QString validationError;
         QByteArray decodedXml;
         if (m_config->IsBloodborneReferenceProxyEnabled()) {
@@ -198,7 +204,7 @@ void WebApiServer::RegisterRoutes() {
         WebApiRoutes::RegisterBloodborneBootstrapRoutes(
             *m_http, *m_db, *m_shared, m_config->GetBloodbornePublicBaseUrl(),
             m_bloodborneServerStatusInfo, m_config->IsBloodborneReferenceProxyEnabled(),
-            welcomeNotice, welcomeMessage);
+            welcomeNotice, welcomeMessage, m_config->GetBloodborneGhostLifetimeSeconds());
     }
     WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled());
 

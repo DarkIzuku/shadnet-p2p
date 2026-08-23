@@ -50,6 +50,18 @@ When enabled with a non-empty message, shadNet encodes the complete UTF-8 text a
 Base64 and adds it as `WarningMessage`. It does not alter the normal notice configuration or
 response. Startup logging reports only the plain and encoded byte counts, never the text.
 
+### Wandering ghost lifetime
+
+Wandering ghosts are the only captured world records treated as temporary. The reference capture
+does not expose its TTL, so shadNet uses a documented local default of ten minutes:
+
+```ini
+BloodborneGhostLifetimeSeconds=600
+```
+
+The accepted range is 60 to 604800 seconds. Messages and tomb/death-vision records are not expired
+automatically because the capture does not demonstrate their lifetime.
+
 Optional request/response logging is enabled with:
 
 ```text
@@ -280,7 +292,7 @@ The response parser reads `CheckTime` using the demonstrated `yyyy-MM-ddTHH:mm:s
 {"CheckTime":"request value","MessageId":"NoticeEmergencyGetResponse","NoticeList":[],"ResKind":0}
 ```
 
-## Local minimum Online endpoints
+## Local Online world-data endpoints
 
 With `BloodborneReferenceProxyEnabled=false`, shadNet serves the accepted local Login and these
 captured bootstrap/keepalive contracts:
@@ -288,19 +300,34 @@ captured bootstrap/keepalive contracts:
 - `POST /basic_utils/get_normal_notice`
 - `POST /basic_utils/get_emergency_notice`
 - `POST /penalty/check_user_priority_move_count`
-- `POST /blood_messenger/exist_messages`
 - `POST /messenger_shell/upload`
+- `POST /blood_messenger/create`
+- `POST /blood_messenger/message_area`
+- `POST /blood_messenger/exist_messages`
+- `POST /blood_messenger/evaluation`
+- `POST /blood_messenger/evaluate_message`
+- `POST /blood_messenger/delete`
+- `POST /tomb_messenger/create`
+- `POST /tomb_messenger/message_area`
+- `POST /tomb_messenger/death_vision_get`
+- `POST /wandering_ghost/create`
 - `POST /wandering_ghost/get`
 - `POST /chair_messenger/get`
 - `POST /channel/get_info`
-- `POST /blood_messenger/evaluation`
-- `POST /blood_messenger/message_area`
-- `POST /tomb_messenger/message_area`
 
-The message/ghost/chair/channel/tomb list routes deliberately return demonstrated empty-list
-success responses; persistence is not implemented. Every endpoint validates the `UserId` and
-`SessionId` created by local Login. The four `/summon_messenger/*` endpoints are not part of this
-bootstrap handler and remain owned by the existing `Bloodborne::SummonBroker`.
+Messages, tombs/death visions, messenger shells, evaluations, and wandering ghosts are persisted in
+SQLite. Every endpoint validates the `UserId` and `SessionId` created by local Login. World-data
+queries honor the captured area/region/channel tuples, requested versions, per-area count, and
+global maximum. The creating account is excluded from its own list results, matching the reference
+capture in which newly created IDs never came back to the same user.
+
+`BloodData`, `ShellData`/`MessShellInfo`, `TombData`, `DeathVisionData`, and
+`WanderingGhostData` remain opaque. shadNet strictly validates standard Base64, stores the original
+encoded text, and returns it without interpreting or changing the decoded bytes. Normal logs contain
+only record IDs, decoded sizes, and SHA-256 hashes.
+
+The four `/summon_messenger/*` endpoints are not part of this implementation and remain owned by
+the existing `Bloodborne::SummonBroker`.
 
 Unknown Bloodborne backend paths return HTTP 404 and emit `[BLOODBORNE LOCAL UNIMPLEMENTED]`;
 they are never treated as success automatically.
@@ -333,19 +360,45 @@ This is a goal-oriented classification based on the captured successful Online s
 
 - A — bootstrap/Online: Login, NoticeNormalGet, NoticeEmergencyGet, SyncCharaId, and
   UserPropertiesMoveCountCheck.
-- B — captured keepalive/optional calls with demonstrated minimal responses: BloodMessSearchAdd,
-  MessengerShellUpload, WanderingGhostGet, ChairMessGetList, ChannelGetInfo,
-  BloodMessGetEvaluate, BloodMessGetList, and TombMessGetList.
-- C — optional feature services not implemented in this phase: create/evaluate/remove messages,
-  DeathVision, persistent ghosts/chairs, full channels/chalices, and UserAgreement.
+- B — captured asynchronous world calls: BloodMess create/get/evaluate/remove/search,
+  MessengerShellUpload, TombMess create/get, DeathVisionGet, and WanderingGhost create/get. These
+  are local and persistent, except wandering ghosts which expire.
+- C — optional feature services not implemented in this phase: persistent chairs, full
+  channels/chalices, UserAgreement, and tomb deletion (not present in the capture).
 - D — co-op: SummonDataCreate, SummonDataGetList, SummonDataRemove, SummonDataSummon. These already
   use the existing summon broker.
 - E — not required by the demonstrated CUSA03173 startup path: ServerTimeGet,
   MultiPlayNetError, and UserPropertiesMoveCount.
 
-Only the captured A/B contracts and D are implemented for this phase. Category C endpoints remain
-published in `ss.info` because the parser requires all tags, but unknown calls return HTTP 404 and
-the explicit local-unimplemented diagnostic.
+Only the captured A/B contracts and D are implemented. Category C endpoints remain published in
+`ss.info` because the parser requires all tags, but unknown calls return HTTP 404 and the explicit
+local-unimplemented diagnostic.
+
+## Two-player world-data test
+
+Keep `BloodborneReferenceProxyEnabled=false`. Sign in with two distinct shadNet accounts and load
+both characters into the same map and region.
+
+1. Player A places a note. Player B reloads or leaves and re-enters the nearby region, reads the
+   note, and rates it. Player A should later receive the updated evaluation count. Player A can then
+   delete the note through the ordinary in-game action.
+2. Player A dies while Player B remains in or reloads the same region. Player B activates the new
+   bloodstain; the requested Death Vision must replay the opaque data uploaded by Player A.
+3. Leave both players moving in the same region for at least two upload cycles. Each client should
+   receive the other account's wandering ghost, never its own.
+
+The reference proxy is only a capture tool. Leave it disabled after development; none of these
+local handlers opens an upstream connection.
+
+### Known contract boundary
+
+The capture contains empty `BloodMessEvaluationList` arrays, so it does not directly expose a
+non-empty element. The local element uses the three fields already demonstrated by the full
+message/evaluation responses: `BloodMessId`, `EvaluatePlus`, and `EvaluateMinus`. All other response
+shapes and opaque fields are copied directly from non-empty captured responses. Ordering among
+multiple valid records is newest-first because the reference capture does not establish a stable
+ordering rule. For non-wildcard wandering-ghost requests, matching level is exact; the captured game
+request used the demonstrated `-1` wildcard.
 
 ## Expected incremental test
 

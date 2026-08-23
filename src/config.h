@@ -90,6 +90,10 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneWelcomeMessage;
     }
+    int GetBloodborneGhostLifetimeSeconds() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneGhostLifetimeSeconds;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -154,6 +158,7 @@ private:
     QString m_bloodborneWelcomeNoticeBody = "Welcome to the private Bloodborne server.";
     bool m_bloodborneWelcomeMessageEnabled = false;
     QString m_bloodborneWelcomeMessage;
+    int m_bloodborneGhostLifetimeSeconds = 600;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

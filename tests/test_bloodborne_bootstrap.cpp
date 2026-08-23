@@ -261,6 +261,7 @@ int main(int argc, char *argv[]) {
         QStringLiteral("Welcome to the private Bloodborne server."));
   CHECK(!defaultConfig.IsBloodborneWelcomeMessageEnabled());
   CHECK(defaultConfig.GetBloodborneWelcomeMessage().isEmpty());
+  CHECK(defaultConfig.GetBloodborneGhostLifetimeSeconds() == 600);
 
   const QString configuredPath =
       directory.filePath(QStringLiteral("configured-shadnet.cfg"));
@@ -273,6 +274,7 @@ int main(int argc, char *argv[]) {
                       welcomeNotice.body);
     settings.setValue(QStringLiteral("BloodborneWelcomeMessageEnabled"), true);
     settings.setValue(QStringLiteral("BloodborneWelcomeMessage"), asciiWelcome);
+    settings.setValue(QStringLiteral("BloodborneGhostLifetimeSeconds"), 900);
     settings.sync();
   }
   ConfigManager configured;
@@ -282,6 +284,7 @@ int main(int argc, char *argv[]) {
   CHECK(configured.GetBloodborneWelcomeNoticeBody() == welcomeNotice.body);
   CHECK(configured.IsBloodborneWelcomeMessageEnabled());
   CHECK(configured.GetBloodborneWelcomeMessage() == asciiWelcome);
+  CHECK(configured.GetBloodborneGhostLifetimeSeconds() == 900);
 
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));

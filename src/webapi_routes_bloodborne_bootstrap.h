@@ -17,6 +17,7 @@ void RegisterBloodborneBootstrapRoutes(
     QHttpServer& http, Database& db, SharedState& shared, const QString& publicBaseUrl,
     const QByteArray& serverStatusInfo, bool referenceProxyEnabled = false,
     const Bloodborne::WelcomeNotice& welcomeNotice = Bloodborne::WelcomeNotice{},
-    const Bloodborne::WelcomeMessage& welcomeMessage = Bloodborne::WelcomeMessage{});
+    const Bloodborne::WelcomeMessage& welcomeMessage = Bloodborne::WelcomeMessage{},
+    int ghostLifetimeSeconds = 600);
 
 } // namespace WebApiRoutes

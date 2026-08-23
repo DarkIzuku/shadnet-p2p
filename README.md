@@ -167,6 +167,7 @@ BloodborneWelcomeNoticeTitle=The Hunter's Dream
 BloodborneWelcomeNoticeBody=Welcome to the private Bloodborne server.
 BloodborneWelcomeMessageEnabled=false
 BloodborneWelcomeMessage=
+BloodborneGhostLifetimeSeconds=600
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

@@ -24,12 +24,15 @@
 #include <QUuid>
 
 #include "bloodborne_bootstrap.h"
+#include "bloodborne_online_service.h"
 #include "bloodborne_ssinfo_reference.h"
 #include "client_session.h"
 #include "database.h"
 
 namespace WebApiRoutes {
 namespace {
+
+constexpr qsizetype MaxJsonRequestBytes = 2 * 1024 * 1024;
 
 struct Identity {
     qint64 userId = 0;
@@ -217,6 +220,8 @@ QHttpServerResponse ErrorResponse(const QString& api, QHttpServerResponse::Statu
 }
 
 std::optional<QJsonObject> ParseRequest(const QHttpServerRequest& request) {
+    if (request.body().isEmpty() || request.body().size() > MaxJsonRequestBytes)
+        return std::nullopt;
     QJsonParseError error{};
     const QJsonDocument document = QJsonDocument::fromJson(request.body(), &error);
     if (error.error != QJsonParseError::NoError || !document.isObject())
@@ -281,6 +286,47 @@ QHttpServerResponse HandleSessionEndpoint(const std::shared_ptr<BootstrapRuntime
     return JsonResponse(api, buildResponse(*body));
 }
 
+using OnlineHandler =
+    std::function<Bloodborne::OnlineResult(qint64 userId, const QJsonObject& request)>;
+
+QHttpServerResponse HandleOnlineEndpoint(const std::shared_ptr<BootstrapRuntime>& runtime,
+                                         const QString& api, const char* requestMessageId,
+                                         const QHttpServerRequest& request,
+                                         const OnlineHandler& handler) {
+    const auto body = ParseRequest(request);
+    TraceRequest(api, request, body);
+    if (!body || !HasMessageId(*body, requestMessageId) || !HasSessionFields(*body)) {
+        return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest,
+                             QStringLiteral("Invalid %1").arg(QLatin1String(requestMessageId)));
+    }
+    const auto session = runtime->ValidateSession(*body, request);
+    if (!session) {
+        return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                             QStringLiteral("Unknown Bloodborne session"));
+    }
+
+    const Bloodborne::OnlineResult result = handler(session->userId, *body);
+    if (result.IsSuccess())
+        return JsonResponse(api, result.response);
+
+    QHttpServerResponse::StatusCode status = QHttpServerResponse::StatusCode::BadRequest;
+    switch (result.error) {
+    case Bloodborne::OnlineError::NotFound:
+        status = QHttpServerResponse::StatusCode::NotFound;
+        break;
+    case Bloodborne::OnlineError::Forbidden:
+        status = QHttpServerResponse::StatusCode::Forbidden;
+        break;
+    case Bloodborne::OnlineError::Database:
+        status = QHttpServerResponse::StatusCode::InternalServerError;
+        break;
+    case Bloodborne::OnlineError::InvalidRequest:
+    case Bloodborne::OnlineError::None:
+        break;
+    }
+    return ErrorResponse(api, status, result.detail);
+}
+
 } // namespace
 
 void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedState& shared,
@@ -288,7 +334,8 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                                        const QByteArray& serverStatusInfo,
                                        bool referenceProxyEnabled,
                                        const Bloodborne::WelcomeNotice& welcomeNotice,
-                                       const Bloodborne::WelcomeMessage& welcomeMessage) {
+                                       const Bloodborne::WelcomeMessage& welcomeMessage,
+                                       int ghostLifetimeSeconds) {
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
                [serverStatusInfo](const QHttpServerRequest& request) {
                    TraceRequest(QStringLiteral("ss.info"), request);
@@ -305,6 +352,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
     }
 
     const auto runtime = std::make_shared<BootstrapRuntime>(db, shared);
+    const auto online = std::make_shared<Bloodborne::OnlineService>(db, ghostLifetimeSeconds);
 
     http.route(
         "/basic_utils/login", QHttpServerRequest::Method::Post,
@@ -441,48 +489,43 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                        });
                });
 
-    http.route(
-        "/blood_messenger/exist_messages", QHttpServerRequest::Method::Post,
-        [runtime](const QHttpServerRequest& request) {
-            return HandleSessionEndpoint(
-                runtime, QStringLiteral("BloodMessSearchAdd"), "BloodMessSearchAddRequest", request,
-                [](const QJsonObject& body) {
-                    return HasArray(body, "BloodMessIdList") && HasNumber(body, "CharaId");
-                },
-                [](const QJsonObject&) {
-                    return EmptyListResponse("BloodMessSearchAddResponse",
-                                             {"BloodMessEvaluationList", "LostBloodMessIdList"});
-                });
-        });
+    http.route("/blood_messenger/exist_messages", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("BloodMessSearchAdd"),
+                                               "BloodMessSearchAddRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->SearchBloodMessages(userId, body);
+                                               });
+               });
 
-    http.route(
-        "/messenger_shell/upload", QHttpServerRequest::Method::Post,
-        [runtime](const QHttpServerRequest& request) {
-            return HandleSessionEndpoint(
-                runtime, QStringLiteral("MessengerShellUpload"), "MessengerShellUploadRequest",
-                request,
-                [](const QJsonObject& body) {
-                    return HasNumber(body, "CharaId") && HasString(body, "ShellData") &&
-                           HasNumber(body, "ShellDataVersion");
-                },
-                [](const QJsonObject&) { return SuccessResponse("MessengerShellUploadResponse"); });
-        });
+    http.route("/messenger_shell/upload", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("MessengerShellUpload"),
+                                               "MessengerShellUploadRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->UploadMessengerShell(userId,
+                                                                                       body);
+                                               });
+               });
 
-    http.route(
-        "/wandering_ghost/get", QHttpServerRequest::Method::Post,
-        [runtime](const QHttpServerRequest& request) {
-            return HandleSessionEndpoint(
-                runtime, QStringLiteral("WanderingGhostGet"), "WanderingGhostGetRequest", request,
-                [](const QJsonObject& body) {
-                    return HasArray(body, "AreaList") && HasNumber(body, "GetMaxCount") &&
-                           HasArray(body, "JoinedCharaIdList") &&
-                           HasNumber(body, "MatchingLevel") &&
-                           HasNumber(body, "WanderingGhostDataVersion");
-                },
-                [](const QJsonObject&) {
-                    return EmptyListResponse("WanderingGhostGetResponse", {"WanderingGhostList"});
-                });
-        });
+    http.route("/wandering_ghost/create", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("WanderingGhostCreate"),
+                                               "WanderingGhostCreateRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->CreateWanderingGhost(userId,
+                                                                                       body);
+                                               });
+               });
+
+    http.route("/wandering_ghost/get", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("WanderingGhostGet"),
+                                               "WanderingGhostGetRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->GetWanderingGhosts(userId, body);
+                                               });
+               });
 
     http.route("/chair_messenger/get", QHttpServerRequest::Method::Post,
                [runtime](const QHttpServerRequest& request) {
@@ -509,46 +552,75 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                });
 
     http.route("/blood_messenger/evaluation", QHttpServerRequest::Method::Post,
-               [runtime](const QHttpServerRequest& request) {
-                   return HandleSessionEndpoint(
-                       runtime, QStringLiteral("BloodMessGetEvaluate"),
-                       "BloodMessGetEvaluateRequest", request,
-                       [](const QJsonObject& body) { return HasArray(body, "BloodMessIdList"); },
-                       [](const QJsonObject&) {
-                           return EmptyListResponse("BloodMessGetEvaluateResponse",
-                                                    {"BloodMessEvaluationList"});
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("BloodMessGetEvaluate"),
+                                               "BloodMessGetEvaluateRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->GetBloodEvaluations(userId, body);
+                                               });
+               });
+
+    http.route("/blood_messenger/create", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("BloodMessCreate"),
+                                               "BloodMessCreateRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->CreateBloodMessages(userId, body);
+                                               });
+               });
+
+    http.route("/blood_messenger/evaluate_message", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(
+                       runtime, QStringLiteral("BloodMessEvaluate"), "BloodMessEvaluateRequest",
+                       request, [online](qint64 userId, const QJsonObject& body) {
+                           return online->EvaluateBloodMessage(userId, body);
                        });
                });
 
-    http.route(
-        "/blood_messenger/message_area", QHttpServerRequest::Method::Post,
-        [runtime](const QHttpServerRequest& request) {
-            return HandleSessionEndpoint(
-                runtime, QStringLiteral("BloodMessGetList"), "BloodMessGetListRequest", request,
-                [](const QJsonObject& body) {
-                    return HasArray(body, "AreaInfoList") && HasNumber(body, "BloodDataVersion") &&
-                           HasNumber(body, "CharaDataVersion") && HasNumber(body, "GetMaxCount") &&
-                           HasNumber(body, "MessShellInfoVersion");
-                },
-                [](const QJsonObject&) {
-                    return EmptyListResponse("BloodMessGetListResponse", {"BloodMessList"});
-                });
-        });
+    http.route("/blood_messenger/delete", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("BloodMessRemove"),
+                                               "BloodMessRemoveRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->DeleteBloodMessage(userId, body);
+                                               });
+               });
+
+    http.route("/blood_messenger/message_area", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("BloodMessGetList"),
+                                               "BloodMessGetListRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->GetBloodMessages(userId, body);
+                                               });
+               });
+
+    http.route("/tomb_messenger/create", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("TombMessCreate"),
+                                               "TombMessCreateRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->CreateTombMessage(userId, body);
+                                               });
+               });
 
     http.route("/tomb_messenger/message_area", QHttpServerRequest::Method::Post,
-               [runtime](const QHttpServerRequest& request) {
-                   return HandleSessionEndpoint(
-                       runtime, QStringLiteral("TombMessGetList"), "TombMessGetListRequest",
-                       request,
-                       [](const QJsonObject& body) {
-                           return HasArray(body, "AreaInfoList") &&
-                                  HasNumber(body, "GetMaxCount") &&
-                                  HasNumber(body, "MessShellInfoVersion") &&
-                                  HasNumber(body, "TombDataVersion");
-                       },
-                       [](const QJsonObject&) {
-                           return EmptyListResponse("TombMessGetListResponse", {"TombMessList"});
-                       });
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("TombMessGetList"),
+                                               "TombMessGetListRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->GetTombMessages(userId, body);
+                                               });
+               });
+
+    http.route("/tomb_messenger/death_vision_get", QHttpServerRequest::Method::Post,
+               [runtime, online](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("DeathVisionGet"),
+                                               "DeathVisionGetRequest", request,
+                                               [online](qint64 userId, const QJsonObject& body) {
+                                                   return online->GetDeathVision(userId, body);
+                                               });
                });
 
     qInfo().noquote() << "Bloodborne bootstrap routes registered; public base URL" << publicBaseUrl;

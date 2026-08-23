@@ -203,6 +203,82 @@ bool Database::Migrate() {
     ins3.prepare("INSERT OR IGNORE INTO migration VALUES(3,'Bloodborne character IDs')");
     Exec(ins3);
 
+    const QStringList stmts4 = {
+        "CREATE TABLE IF NOT EXISTS bloodborne_messenger_shell("
+        "  user_id INTEGER PRIMARY KEY REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  chara_id REAL NOT NULL,"
+        "  shell_data TEXT NOT NULL,"
+        "  shell_data_version INTEGER NOT NULL,"
+        "  updated_at INTEGER NOT NULL)",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_blood_message("
+        "  blood_mess_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  owner_user_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  owner_chara_id REAL NOT NULL,"
+        "  area_id INTEGER NOT NULL,"
+        "  area_region_id INTEGER NOT NULL,"
+        "  channel_id INTEGER NOT NULL,"
+        "  blood_data TEXT NOT NULL,"
+        "  blood_data_version INTEGER NOT NULL,"
+        "  chara_data INTEGER NOT NULL,"
+        "  chara_data_version INTEGER NOT NULL,"
+        "  base_evaluate_plus INTEGER NOT NULL DEFAULT 0,"
+        "  base_evaluate_minus INTEGER NOT NULL DEFAULT 0,"
+        "  prev_blood_mess_id REAL NOT NULL,"
+        "  created_at INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_blood_message_area "
+        "ON bloodborne_blood_message(area_id, area_region_id, channel_id, created_at DESC)",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_blood_message_evaluation("
+        "  blood_mess_id INTEGER NOT NULL REFERENCES bloodborne_blood_message(blood_mess_id) "
+        "    ON DELETE CASCADE,"
+        "  user_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  evaluate_kind INTEGER NOT NULL CHECK(evaluate_kind IN (-1, 1)),"
+        "  created_at INTEGER NOT NULL,"
+        "  PRIMARY KEY(blood_mess_id, user_id))",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_tomb_message("
+        "  tomb_mess_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  owner_user_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  owner_chara_id REAL NOT NULL,"
+        "  area_id INTEGER NOT NULL,"
+        "  area_region_id INTEGER NOT NULL,"
+        "  channel_id INTEGER NOT NULL,"
+        "  tomb_data TEXT NOT NULL,"
+        "  tomb_data_version INTEGER NOT NULL,"
+        "  death_vision_data TEXT NOT NULL,"
+        "  death_vision_data_version INTEGER NOT NULL,"
+        "  created_at INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_tomb_message_area "
+        "ON bloodborne_tomb_message(area_id, area_region_id, channel_id, created_at DESC)",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_wandering_ghost("
+        "  wandering_ghost_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  owner_user_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  owner_chara_id REAL NOT NULL,"
+        "  area_id INTEGER NOT NULL,"
+        "  area_region_id INTEGER NOT NULL,"
+        "  channel_id INTEGER NOT NULL,"
+        "  matching_level INTEGER NOT NULL,"
+        "  reject_ignore INTEGER NOT NULL,"
+        "  wandering_ghost_data TEXT NOT NULL,"
+        "  wandering_ghost_data_version INTEGER NOT NULL,"
+        "  created_at INTEGER NOT NULL,"
+        "  expires_at INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_wandering_ghost_area "
+        "ON bloodborne_wandering_ghost(area_id, area_region_id, channel_id, expires_at)",
+    };
+
+    for (const QString& statement : stmts4) {
+        if (!Exec(statement))
+            return false;
+    }
+
+    QSqlQuery ins4(m_db);
+    ins4.prepare("INSERT OR IGNORE INTO migration VALUES(4,'Bloodborne asynchronous world data')");
+    if (!Exec(ins4))
+        return false;
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();

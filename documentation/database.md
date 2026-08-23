@@ -194,3 +194,20 @@ After a successful `RecordScore`, the client may optionally call `RecordScoreDat
 Large per-score blobs are stored on disk as `score_data/<20-digit-id>.sdt` rather than in SQLite. This avoids bloating the database with multi-megabyte BLOBs. The `data_id` column is the link between a score row and its file. On server startup, any `.sdt` files whose IDs are not referenced by any `data_id` column are deleted as orphans.
 
 ---
+
+## Migration 4: Bloodborne asynchronous world data
+
+Migration 4 adds `bloodborne_messenger_shell`, `bloodborne_blood_message`,
+`bloodborne_blood_message_evaluation`, `bloodborne_tomb_message`, and
+`bloodborne_wandering_ghost` plus area indexes. Owner IDs reference `account(user_id)` with cascade
+deletion. Evaluations use `(blood_mess_id, user_id)` as their primary key, preventing one account
+from increasing the same message repeatedly.
+
+The protocol's binary fields are stored as their exact validated standard-Base64 `TEXT`, rather
+than decoded and reserialized. This preserves byte-for-byte round trips for `BloodData`, shell data,
+`TombData`, `DeathVisionData`, and `WanderingGhostData`. Area, region, channel, owner, version,
+evaluation, and creation/expiry metadata remain searchable columns. Message and tomb rows persist
+until an observed delete flow removes them or the owning account is deleted. Wandering ghosts carry
+an `expires_at` timestamp controlled by `BloodborneGhostLifetimeSeconds`.
+
+---

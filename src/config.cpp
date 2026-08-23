@@ -63,6 +63,7 @@ void ConfigManager::Parse(const QString& path) {
         str("BloodborneWelcomeNoticeBody", "Welcome to the private Bloodborne server.");
     m_bloodborneWelcomeMessageEnabled = boolean("BloodborneWelcomeMessageEnabled", false);
     m_bloodborneWelcomeMessage = str("BloodborneWelcomeMessage", "");
+    m_bloodborneGhostLifetimeSeconds = str("BloodborneGhostLifetimeSeconds", "600").toInt();
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();
