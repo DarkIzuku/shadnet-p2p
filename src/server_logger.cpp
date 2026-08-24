@@ -36,20 +36,19 @@ QString Uptime(qint64 milliseconds) {
 QString SanitizeForDisk(QString line) {
     // These replacements intentionally affect only the persisted copy. The Qt
     // console handler still receives the original message and retains its format.
-    const QRegularExpression jsonSecret(
-        QStringLiteral(R"regex((?i)("(?:password|authorizationcode|registrationsecretkey|token|access_token|sessionid|secret|secretkey)"\s*:\s*")[^"]*("))regex"));
+    const QRegularExpression jsonSecret(QStringLiteral(
+        R"regex((?i)("(?:password|authorizationcode|registrationsecretkey|token|access_token|sessionid|secret|secretkey)"\s*:\s*")[^"]*("))regex"));
     line.replace(jsonSecret, QStringLiteral("\\1<redacted>\\2"));
 
-    const QRegularExpression headerSecret(
-        QStringLiteral(R"((?i)\b(?:authorization|proxy-authorization)\s*:\s*[^\s,;]+(?:\s+[^\s,;]+)?)"));
+    const QRegularExpression headerSecret(QStringLiteral(
+        R"((?i)\b(?:authorization|proxy-authorization)\s*:\s*[^\s,;]+(?:\s+[^\s,;]+)?)"));
     line.replace(headerSecret, QStringLiteral("Authorization: <redacted>"));
 
-    const QRegularExpression bearerSecret(
-        QStringLiteral(R"((?i)\bbearer\s+[^\s,;]+)"));
+    const QRegularExpression bearerSecret(QStringLiteral(R"((?i)\bbearer\s+[^\s,;]+)"));
     line.replace(bearerSecret, QStringLiteral("Bearer <redacted>"));
 
-    const QRegularExpression keyValueSecret(
-        QStringLiteral(R"((?i)\b(password|authorizationcode|registrationsecretkey|token|access_token|sessionid|secret|secretkey)\s*([=:])\s*[^\s,;]+)"));
+    const QRegularExpression keyValueSecret(QStringLiteral(
+        R"((?i)\b(password|authorizationcode|registrationsecretkey|token|access_token|sessionid|secret|secretkey)\s*([=:])\s*[^\s,;]+)"));
     line.replace(keyValueSecret, QStringLiteral("\\1\\2<redacted>"));
     return line;
 }
