@@ -262,6 +262,10 @@ int main(int argc, char *argv[]) {
   CHECK(!defaultConfig.IsBloodborneWelcomeMessageEnabled());
   CHECK(defaultConfig.GetBloodborneWelcomeMessage().isEmpty());
   CHECK(defaultConfig.GetBloodborneGhostLifetimeSeconds() == 600);
+  CHECK(defaultConfig.IsServerLogEnabled());
+  CHECK(defaultConfig.GetServerLogDirectory() == QStringLiteral("logs"));
+  CHECK(defaultConfig.GetServerLogKeepDays() == 30);
+  CHECK(defaultConfig.IsServerLogFlushImmediately());
 
   const QString configuredPath =
       directory.filePath(QStringLiteral("configured-shadnet.cfg"));
@@ -275,6 +279,11 @@ int main(int argc, char *argv[]) {
     settings.setValue(QStringLiteral("BloodborneWelcomeMessageEnabled"), true);
     settings.setValue(QStringLiteral("BloodborneWelcomeMessage"), asciiWelcome);
     settings.setValue(QStringLiteral("BloodborneGhostLifetimeSeconds"), 900);
+    settings.setValue(QStringLiteral("ServerLogEnabled"), false);
+    settings.setValue(QStringLiteral("ServerLogDirectory"),
+                      QStringLiteral("custom-logs"));
+    settings.setValue(QStringLiteral("ServerLogKeepDays"), 12);
+    settings.setValue(QStringLiteral("ServerLogFlushImmediately"), false);
     settings.sync();
   }
   ConfigManager configured;
@@ -285,6 +294,10 @@ int main(int argc, char *argv[]) {
   CHECK(configured.IsBloodborneWelcomeMessageEnabled());
   CHECK(configured.GetBloodborneWelcomeMessage() == asciiWelcome);
   CHECK(configured.GetBloodborneGhostLifetimeSeconds() == 900);
+  CHECK(!configured.IsServerLogEnabled());
+  CHECK(configured.GetServerLogDirectory() == QStringLiteral("custom-logs"));
+  CHECK(configured.GetServerLogKeepDays() == 12);
+  CHECK(!configured.IsServerLogFlushImmediately());
 
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));

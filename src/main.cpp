@@ -7,6 +7,7 @@
 #include <QLoggingCategory>
 #include "config.h"
 #include "server.h"
+#include "server_logger.h"
 #include "webapi_server.h"
 
 const QString versionString = QStringLiteral("0.0.13");
@@ -27,11 +28,23 @@ int main(int argc, char* argv[]) {
     // Set working directory to executable location
     QDir::setCurrent(QCoreApplication::applicationDirPath());
 
+    // Install before reading the configuration. This preserves the normal Qt
+    // console handler and buffers early startup messages until logging is configured.
+    ServerLogger logger;
+    logger.InstallEarly();
+
     qInfo() << "ShadNet Qt server version" << versionString;
 
     ConfigManager config;
     config.Load();
     config.LoadBannedDomains();
+
+    ServerLogOptions logOptions;
+    logOptions.enabled = config.IsServerLogEnabled();
+    logOptions.directory = config.GetServerLogDirectory();
+    logOptions.keepDays = config.GetServerLogKeepDays();
+    logOptions.flushImmediately = config.IsServerLogFlushImmediately();
+    logger.Configure(logOptions, versionString);
 
     ShadNetServer server;
     if (!server.Start(&config)) {

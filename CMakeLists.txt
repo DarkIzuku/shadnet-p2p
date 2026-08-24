@@ -44,6 +44,8 @@ set(SOURCES
     src/main.cpp
     src/config.cpp
     src/config.h
+    src/server_logger.cpp
+    src/server_logger.h
     src/server.cpp
     src/server.h
     src/client_session.cpp
@@ -173,6 +175,14 @@ if(BUILD_TESTING)
         Qt6::HttpServer
     )
     add_test(NAME bloodborne_reference_proxy COMMAND test_bloodborne_reference_proxy)
+
+    add_executable(test_server_logger EXCLUDE_FROM_ALL
+        tests/test_server_logger.cpp
+        src/server_logger.cpp
+    )
+    target_include_directories(test_server_logger PRIVATE src)
+    target_link_libraries(test_server_logger PRIVATE Qt6::Core)
+    add_test(NAME server_logger COMMAND test_server_logger)
 
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp

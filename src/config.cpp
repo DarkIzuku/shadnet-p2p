@@ -64,6 +64,10 @@ void ConfigManager::Parse(const QString& path) {
     m_bloodborneWelcomeMessageEnabled = boolean("BloodborneWelcomeMessageEnabled", false);
     m_bloodborneWelcomeMessage = str("BloodborneWelcomeMessage", "");
     m_bloodborneGhostLifetimeSeconds = str("BloodborneGhostLifetimeSeconds", "600").toInt();
+    m_serverLogEnabled = boolean("ServerLogEnabled", true);
+    m_serverLogDirectory = str("ServerLogDirectory", "logs").trimmed();
+    m_serverLogKeepDays = str("ServerLogKeepDays", "30").toInt();
+    m_serverLogFlushImmediately = boolean("ServerLogFlushImmediately", true);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();

@@ -168,6 +168,10 @@ BloodborneWelcomeNoticeBody=Welcome to the private Bloodborne server.
 BloodborneWelcomeMessageEnabled=false
 BloodborneWelcomeMessage=
 BloodborneGhostLifetimeSeconds=600
+ServerLogEnabled=true
+ServerLogDirectory=logs
+ServerLogKeepDays=30
+ServerLogFlushImmediately=true
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```
@@ -183,6 +187,20 @@ validation has been configured separately.
 Leaving `RegistrationSecretKey` empty enables open registration. In that case,
 the final key argument is omitted from the registration command. Open
 registration is not recommended for an ongoing server.
+
+### Server logs
+
+By default, shadNet writes a second copy of Qt console messages to a UTF-8 log file for each
+server launch. The default relative directory is alongside `shadnet.exe`:
+
+```text
+logs/YYYY-MM-DD_HH-mm-ss/shadnet.log
+```
+
+`ServerLogDirectory` can instead be an absolute path. `ServerLogKeepDays=0` disables automatic
+cleanup; any positive value removes only older session directories bearing a shadNet session
+marker. `ServerLogFlushImmediately=true` flushes after every message. Set
+`ServerLogEnabled=false` to keep the original console-only behavior.
 
 ## Choose a co-op mode
 
