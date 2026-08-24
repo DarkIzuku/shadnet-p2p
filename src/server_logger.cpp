@@ -37,7 +37,7 @@ QString SanitizeForDisk(QString line) {
     // These replacements intentionally affect only the persisted copy. The Qt
     // console handler still receives the original message and retains its format.
     const QRegularExpression jsonSecret(
-        QStringLiteral(R"((?i)("(?:password|authorizationcode|registrationsecretkey|token|access_token|sessionid|secret|secretkey)"\s*:\s*")[^"]*("))"));
+        QStringLiteral(R"regex((?i)("(?:password|authorizationcode|registrationsecretkey|token|access_token|sessionid|secret|secretkey)"\s*:\s*")[^"]*("))regex"));
     line.replace(jsonSecret, QStringLiteral("\\1<redacted>\\2"));
 
     const QRegularExpression headerSecret(
