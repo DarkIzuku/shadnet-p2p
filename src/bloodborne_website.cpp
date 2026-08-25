@@ -378,10 +378,10 @@ private:
                                                 QByteArrayLiteral("application/javascript; "
                                                                   "charset=utf-8"));
                       });
-        m_http->route(QStringLiteral("/assets/requiem-hero.png"), QHttpServerRequest::Method::Get,
+        m_http->route(QStringLiteral("/assets/requiem-hero.jpg"), QHttpServerRequest::Method::Get,
                       [](const QHttpServerRequest&) {
-                          return StaticResource(QStringLiteral(":/website/requiem-hero.png"),
-                                                QByteArrayLiteral("image/png"));
+                          return StaticResource(QStringLiteral(":/website/requiem-hero.jpg"),
+                                                QByteArrayLiteral("image/jpeg"));
                       });
         m_http->route(QStringLiteral("/assets/requiem-emblem.png"), QHttpServerRequest::Method::Get,
                       [](const QHttpServerRequest&) {

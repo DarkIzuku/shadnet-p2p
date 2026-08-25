@@ -43,7 +43,7 @@ SPDX-License-Identifier = "GPL-2.0-or-later"
 
 [[annotations]]
 path = [
-    "web/assets/backgrounds/requiem-hero.png",
+    "web/assets/backgrounds/requiem-hero.jpg",
     "web/assets/requiem-emblem.png",
 ]
 

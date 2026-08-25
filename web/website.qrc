@@ -5,7 +5,7 @@
     <file alias="index.html">index.html</file>
     <file alias="site.css">assets/site.css</file>
     <file alias="site.js">assets/site.js</file>
-    <file alias="requiem-hero.png">assets/backgrounds/requiem-hero.png</file>
+    <file alias="requiem-hero.jpg">assets/backgrounds/requiem-hero.jpg</file>
     <file alias="requiem-emblem.png">assets/requiem-emblem.png</file>
   </qresource>
 </RCC>

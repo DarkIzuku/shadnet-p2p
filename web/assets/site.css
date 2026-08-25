@@ -43,7 +43,7 @@ a { color: inherit; text-decoration: none; }
   background-image:
     linear-gradient(90deg, rgba(8, 9, 11, .28) 0%, rgba(8, 9, 11, .08) 47%, rgba(8, 9, 11, .25) 100%),
     linear-gradient(180deg, rgba(4, 6, 8, .1) 0%, rgba(11, 12, 14, .28) 58%, #0b0c0e 100%),
-    url("/assets/requiem-hero.png");
+    url("/assets/requiem-hero.jpg");
   background-size: cover;
   background-position: center top;
   filter: saturate(.76) contrast(1.03);
