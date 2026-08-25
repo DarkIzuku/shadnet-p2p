@@ -50,3 +50,13 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 DarkIzuku"
 SPDX-License-Identifier = "GPL-2.0-or-later"
+
+[[annotations]]
+path = [
+    ".github/workflows/build-clientsample.yml",
+    "web/index.html",
+]
+
+precedence = "aggregate"
+SPDX-FileCopyrightText = "shadNet Project"
+SPDX-License-Identifier = "GPL-2.0-or-later"
