@@ -198,14 +198,20 @@ if(BUILD_TESTING)
         src/config.cpp
         src/database.cpp
         web/website.qrc
+        "${PROTO_OUT}/shadnet.pb.h"
     )
-    target_include_directories(test_bloodborne_website PRIVATE src)
+    target_include_directories(test_bloodborne_website PRIVATE
+        src
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
     target_link_libraries(test_bloodborne_website PRIVATE
         Qt6::Core
         Qt6::Gui
         Qt6::Network
         Qt6::Sql
         Qt6::HttpServer
+        libprotobuf
     )
     add_test(NAME bloodborne_website COMMAND test_bloodborne_website)
 
