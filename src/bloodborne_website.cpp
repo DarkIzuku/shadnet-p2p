@@ -684,7 +684,7 @@ private:
             "INSERT INTO bloodborne_web_session(token_hash,user_id,created_at,last_seen_at,"
             "expires_at) VALUES(?,?,?,?,?)"));
         query.addBindValue(HashToken(token));
-        query.addBindValue(user->userId);
+        query.addBindValue(static_cast<qlonglong>(user->userId));
         query.addBindValue(now);
         query.addBindValue(now);
         query.addBindValue(now + WebSessionLifetimeSeconds);

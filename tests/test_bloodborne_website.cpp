@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
   CHECK(temporary.isValid());
   const QString dbPath = temporary.filePath(QStringLiteral("db/shadnet.db"));
 
-  SharedState shared{};
+  SharedState shared;
   const QString disabledPath =
       temporary.filePath(QStringLiteral("disabled.cfg"));
   WriteConfig(disabledPath, false, true);
