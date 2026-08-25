@@ -290,8 +290,10 @@ public:
         if (m_tcp && m_tcp->isListening())
             m_tcp->close();
         ClosePlayerSessionsAtShutdown();
-        m_http.reset();
+        // QHttpServer::bind() reparents the TCP server to the HTTP server.
+        // Destroy the child first so both unique_ptr instances remain safe.
         m_tcp.reset();
+        m_http.reset();
         m_db.reset();
     }
 
