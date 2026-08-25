@@ -19,6 +19,7 @@
 #include <QString>
 
 #include "bloodborne_summon_broker.h"
+#include "database.h"
 
 namespace WebApiRoutes {
 namespace {
@@ -102,7 +103,8 @@ void TraceSummonRequest(const char* route, const QHttpServerRequest& request) {
 
 } // namespace
 
-void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
+void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop,
+                              Database* websiteMetricsDatabase) {
     seamlessCoop = seamlessCoop || EnvEnabled("SHADNET_BLOODBORNE_SEAMLESS_COOP");
     Bloodborne::SummonBroker::Options options;
     options.seamlessCoop = seamlessCoop;
@@ -112,41 +114,46 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
             << (broker->IsSeamlessCoopEnabled() ? "enabled" : "disabled") << "anywhere summons"
             << (broker->IsSeamlessAnywhereSummonsEnabled() ? "enabled" : "disabled");
 
-    http.route("/summon_messenger/create", QHttpServerRequest::Method::Post,
-               [broker](const QHttpServerRequest& request) -> QHttpServerResponse {
-                   TraceSummonRequest("create", request);
-                   const auto body = ParseRequest(request);
-                   if (!body || !Bloodborne::HasRequiredAdvertisementFields(*body)) {
-                       return InvalidRequest(QStringLiteral("Invalid summon advertisement"));
-                   }
-                   const auto result = broker->Advertise(*body, request.body(),
-                                                         QDateTime::currentMSecsSinceEpoch());
-                   if (!result.pendingClaim.isEmpty()) {
-                       const QByteArray response =
-                           Bloodborne::BuildClaimDeliveryResponse(result.pendingClaim);
-                       if (response.isEmpty()) {
-                           return InvalidRequest(QStringLiteral("Invalid pending summon claim"));
-                       }
-                       qInfo() << "Bloodborne summon: delivered claim to user"
-                               << Integer(*body, QStringLiteral("UserId")) << "session"
-                               << body->value(QStringLiteral("SessionId")).toString()
-                               << "host-placement-bytes" << result.pendingHostPlacement.size();
-                       return RawJsonResponse(response, result.pendingHostPlacement);
-                   }
-                   if (!result.pendingHostPlacement.isEmpty()) {
-                       qInfo() << "Bloodborne summon: preparing cross-map user"
-                               << Integer(*body, QStringLiteral("UserId")) << "session"
-                               << body->value(QStringLiteral("SessionId")).toString()
-                               << "destination placement bytes"
-                               << result.pendingHostPlacement.size();
-                       return SummonResponse(QStringLiteral("SummonDataCreateResponse"),
-                                             result.pendingHostPlacement);
-                   }
-                   qInfo() << "Bloodborne summon: advertised user"
-                           << Integer(*body, QStringLiteral("UserId")) << "session"
-                           << body->value(QStringLiteral("SessionId")).toString();
-                   return SummonResponse(QStringLiteral("SummonDataCreateResponse"));
-               });
+    http.route(
+        "/summon_messenger/create", QHttpServerRequest::Method::Post,
+        [broker, websiteMetricsDatabase](const QHttpServerRequest& request) -> QHttpServerResponse {
+            TraceSummonRequest("create", request);
+            const auto body = ParseRequest(request);
+            if (!body || !Bloodborne::HasRequiredAdvertisementFields(*body)) {
+                return InvalidRequest(QStringLiteral("Invalid summon advertisement"));
+            }
+            const auto result =
+                broker->Advertise(*body, request.body(), QDateTime::currentMSecsSinceEpoch());
+            if (websiteMetricsDatabase != nullptr) {
+                websiteMetricsDatabase->RecordBloodborneWebsiteEvent(
+                    Integer(*body, QStringLiteral("UserId")),
+                    BloodborneWebsiteEvent::SummonAdvertised);
+            }
+            if (!result.pendingClaim.isEmpty()) {
+                const QByteArray response =
+                    Bloodborne::BuildClaimDeliveryResponse(result.pendingClaim);
+                if (response.isEmpty()) {
+                    return InvalidRequest(QStringLiteral("Invalid pending summon claim"));
+                }
+                qInfo() << "Bloodborne summon: delivered claim to user"
+                        << Integer(*body, QStringLiteral("UserId")) << "session"
+                        << body->value(QStringLiteral("SessionId")).toString()
+                        << "host-placement-bytes" << result.pendingHostPlacement.size();
+                return RawJsonResponse(response, result.pendingHostPlacement);
+            }
+            if (!result.pendingHostPlacement.isEmpty()) {
+                qInfo() << "Bloodborne summon: preparing cross-map user"
+                        << Integer(*body, QStringLiteral("UserId")) << "session"
+                        << body->value(QStringLiteral("SessionId")).toString()
+                        << "destination placement bytes" << result.pendingHostPlacement.size();
+                return SummonResponse(QStringLiteral("SummonDataCreateResponse"),
+                                      result.pendingHostPlacement);
+            }
+            qInfo() << "Bloodborne summon: advertised user"
+                    << Integer(*body, QStringLiteral("UserId")) << "session"
+                    << body->value(QStringLiteral("SessionId")).toString();
+            return SummonResponse(QStringLiteral("SummonDataCreateResponse"));
+        });
 
     http.route("/summon_messenger/get", QHttpServerRequest::Method::Post,
                [broker](const QHttpServerRequest& request) -> QHttpServerResponse {
@@ -187,35 +194,41 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop) {
                    return response;
                });
 
-    http.route("/summon_messenger/request", QHttpServerRequest::Method::Post,
-               [broker](const QHttpServerRequest& request) -> QHttpServerResponse {
-                   TraceSummonRequest("request", request);
-                   const auto body = ParseRequest(request);
-                   if (!body) {
-                       return InvalidRequest(QStringLiteral("Invalid summon request"));
-                   }
-                   const auto result =
-                       broker->Claim(*body, request.body(), QDateTime::currentMSecsSinceEpoch(),
-                                     request.value(HostPlacementHeader));
-                   switch (result.status) {
-                   case Bloodborne::SummonBroker::ClaimStatus::Claimed:
-                       qInfo() << "Bloodborne summon: claimed session" << result.targetSessionId
-                               << "user" << result.targetUserId;
-                       break;
-                   case Bloodborne::SummonBroker::ClaimStatus::AlreadyClaimed:
-                       qInfo() << "Bloodborne summon: repeated claim for session"
-                               << result.targetSessionId;
-                       break;
-                   case Bloodborne::SummonBroker::ClaimStatus::NotFound:
-                       qWarning() << "Bloodborne summon: claim target not found";
-                       break;
-                   case Bloodborne::SummonBroker::ClaimStatus::Conflict:
-                       qWarning() << "Bloodborne summon: conflicting claim for session"
-                                  << result.targetSessionId;
-                       break;
-                   }
-                   return SummonResponse(QStringLiteral("SummonDataSummonResponse"));
-               });
+    http.route(
+        "/summon_messenger/request", QHttpServerRequest::Method::Post,
+        [broker, websiteMetricsDatabase](const QHttpServerRequest& request) -> QHttpServerResponse {
+            TraceSummonRequest("request", request);
+            const auto body = ParseRequest(request);
+            if (!body) {
+                return InvalidRequest(QStringLiteral("Invalid summon request"));
+            }
+            const auto result =
+                broker->Claim(*body, request.body(), QDateTime::currentMSecsSinceEpoch(),
+                              request.value(HostPlacementHeader));
+            switch (result.status) {
+            case Bloodborne::SummonBroker::ClaimStatus::Claimed:
+                if (websiteMetricsDatabase != nullptr) {
+                    websiteMetricsDatabase->RecordBloodborneWebsiteEvent(
+                        Integer(*body, QStringLiteral("UserId")),
+                        BloodborneWebsiteEvent::SummonClaimed);
+                }
+                qInfo() << "Bloodborne summon: claimed session" << result.targetSessionId << "user"
+                        << result.targetUserId;
+                break;
+            case Bloodborne::SummonBroker::ClaimStatus::AlreadyClaimed:
+                qInfo() << "Bloodborne summon: repeated claim for session"
+                        << result.targetSessionId;
+                break;
+            case Bloodborne::SummonBroker::ClaimStatus::NotFound:
+                qWarning() << "Bloodborne summon: claim target not found";
+                break;
+            case Bloodborne::SummonBroker::ClaimStatus::Conflict:
+                qWarning() << "Bloodborne summon: conflicting claim for session"
+                           << result.targetSessionId;
+                break;
+            }
+            return SummonResponse(QStringLiteral("SummonDataSummonResponse"));
+        });
 }
 
 } // namespace WebApiRoutes

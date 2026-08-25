@@ -110,6 +110,18 @@ public:
         QReadLocker lk(&m_lock);
         return m_serverLogFlushImmediately;
     }
+    bool IsBloodborneWebsiteEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteEnabled;
+    }
+    QString GetBloodborneWebsitePort() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsitePort;
+    }
+    bool IsBloodborneWebsiteRegistrationEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteRegistrationEnabled;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -179,6 +191,9 @@ private:
     QString m_serverLogDirectory = "logs";
     int m_serverLogKeepDays = 30;
     bool m_serverLogFlushImmediately = true;
+    bool m_bloodborneWebsiteEnabled = true;
+    QString m_bloodborneWebsitePort = "31316";
+    bool m_bloodborneWebsiteRegistrationEnabled = true;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

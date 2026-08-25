@@ -40,3 +40,13 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "shadNet Project"
 SPDX-License-Identifier = "GPL-2.0-or-later"
+
+[[annotations]]
+path = [
+    "web/assets/backgrounds/requiem-hero.png",
+    "web/assets/requiem-emblem.png",
+]
+
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 DarkIzuku"
+SPDX-License-Identifier = "GPL-2.0-or-later"

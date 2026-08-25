@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <QDateTime>
 #include <QDebug>
+#include "account_registration.h"
 #include "client_session.h"
 #include "proto_utils.h"
 #include "shadnet.pb.h"
@@ -28,34 +29,22 @@ ErrorType ClientSession::CmdCreate(StreamExtractor& data, QByteArray& reply) {
     if (!m_shared->config->IsRegistrationAllowed(secretKey))
         return ErrorType::Unauthorized;
 
-    if (!IsValidNpid(npid))
+    const AccountRegistrationRequest registration{npid, password, email, avatarUrl};
+    switch (RegisterShadNetAccount(registration, *m_shared->config, *m_db)) {
+    case AccountRegistrationError::None:
+        break;
+    case AccountRegistrationError::BannedEmailProvider:
+        return ErrorType::CreationBannedEmailProvider;
+    case AccountRegistrationError::ExistingUsername:
+        return ErrorType::CreationExistingUsername;
+    case AccountRegistrationError::ExistingEmail:
+        return ErrorType::CreationExistingEmail;
+    case AccountRegistrationError::InvalidUsername:
+    case AccountRegistrationError::InvalidPassword:
+    case AccountRegistrationError::InvalidEmail:
         return ErrorType::InvalidInput;
-
-    if (password.isEmpty() || email.isEmpty())
-        return ErrorType::InvalidInput;
-
-    // Check banned email domain.
-    int at = email.indexOf('@');
-    if (at >= 0) {
-        QString domain = email.mid(at + 1).toLower();
-        if (m_shared->config->IsBannedDomain(domain))
-            return ErrorType::CreationBannedEmailProvider;
-    }
-
-    if (avatarUrl.isEmpty())
-        avatarUrl = "https://shadps4.net/shadnet/avatars/default_01.png";
-
-    // npid is used as display name by the server.
-    auto err = m_db->CreateAccount(npid, password, avatarUrl, email);
-    if (err) {
-        switch (*err) {
-        case DbError::ExistingUsername:
-            return ErrorType::CreationExistingUsername;
-        case DbError::ExistingEmail:
-            return ErrorType::CreationExistingEmail;
-        default:
-            return ErrorType::CreationError;
-        }
+    default:
+        return ErrorType::CreationError;
     }
 
     qInfo() << "Account created:" << npid;
@@ -202,6 +191,7 @@ ErrorType ClientSession::CmdLogin(StreamExtractor& data, QByteArray& reply) {
         }
     }
 
+    emit WebsiteAuthenticated(user.userId, user.username, !req.appear_offline());
     qInfo() << "Authenticated:" << npid;
     return ErrorType::NoError;
 }

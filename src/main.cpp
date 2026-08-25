@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QLoggingCategory>
+#include "bloodborne_website.h"
 #include "config.h"
 #include "server.h"
 #include "server_logger.h"
@@ -56,6 +57,17 @@ int main(int argc, char* argv[]) {
     WebApiServer webapi;
     if (!webapi.Start(&config, "db/shadnet.db", &server.Shared())) {
         qWarning() << "WebApiServer failed to start; continuing without WebAPI";
+    }
+
+    // The optional community website uses its own listener and only observes
+    // authenticated-session events. It does not register game API routes.
+    BloodborneWebsiteServer website;
+    QObject::connect(&server, &ShadNetServer::ClientAuthenticated, &website,
+                     &BloodborneWebsiteServer::OnPlayerAuthenticated);
+    QObject::connect(&server, &ShadNetServer::ClientDisconnected, &website,
+                     &BloodborneWebsiteServer::OnPlayerDisconnected);
+    if (!website.Start(&config, "db/shadnet.db", &server.Shared())) {
+        qWarning() << "Bloodborne website failed to start; continuing without website";
     }
 
     return app.exec();

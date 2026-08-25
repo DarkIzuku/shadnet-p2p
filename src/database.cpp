@@ -279,9 +279,136 @@ bool Database::Migrate() {
     if (!Exec(ins4))
         return false;
 
+    const QStringList stmts5 = {
+        "CREATE TABLE IF NOT EXISTS bloodborne_player_session("
+        "  player_session_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  user_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  started_at INTEGER NOT NULL,"
+        "  ended_at INTEGER,"
+        "  duration_seconds INTEGER NOT NULL DEFAULT 0,"
+        "  interrupted INTEGER NOT NULL DEFAULT 0,"
+        "  public_visible INTEGER NOT NULL DEFAULT 1)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_player_session_user "
+        "ON bloodborne_player_session(user_id, started_at DESC)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_player_session_open "
+        "ON bloodborne_player_session(user_id) WHERE ended_at IS NULL",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_player_stats("
+        "  user_id INTEGER PRIMARY KEY REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  messages_created INTEGER NOT NULL DEFAULT 0,"
+        "  bloodstains_created INTEGER NOT NULL DEFAULT 0,"
+        "  ghosts_generated INTEGER NOT NULL DEFAULT 0,"
+        "  summons_advertised INTEGER NOT NULL DEFAULT 0,"
+        "  summon_claims INTEGER NOT NULL DEFAULT 0)",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_web_session("
+        "  token_hash BLOB PRIMARY KEY,"
+        "  user_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  created_at INTEGER NOT NULL,"
+        "  last_seen_at INTEGER NOT NULL,"
+        "  expires_at INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_web_session_user "
+        "ON bloodborne_web_session(user_id, expires_at)",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_web_profile("
+        "  user_id INTEGER PRIMARY KEY REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  avatar_file TEXT NOT NULL DEFAULT '',"
+        "  updated_at INTEGER NOT NULL)",
+
+        "CREATE TABLE IF NOT EXISTS bloodborne_activity("
+        "  activity_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  user_id INTEGER REFERENCES account(user_id) ON DELETE SET NULL,"
+        "  event_type TEXT NOT NULL,"
+        "  created_at INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_activity_recent "
+        "ON bloodborne_activity(created_at DESC, activity_id DESC)",
+    };
+
+    for (const QString& statement : stmts5) {
+        if (!Exec(statement))
+            return false;
+    }
+
+    // Seed exact lifetime counters from data that predates this migration. INSERT OR IGNORE
+    // makes the backfill idempotent and preserves all counters recorded after migration.
+    if (!Exec("INSERT OR IGNORE INTO bloodborne_player_stats("
+              "user_id,messages_created,bloodstains_created,ghosts_generated,"
+              "summons_advertised,summon_claims) "
+              "SELECT a.user_id,"
+              "(SELECT COUNT(*) FROM bloodborne_blood_message b WHERE b.owner_user_id=a.user_id),"
+              "(SELECT COUNT(*) FROM bloodborne_tomb_message t WHERE t.owner_user_id=a.user_id),"
+              "(SELECT COUNT(*) FROM bloodborne_wandering_ghost g "
+              " WHERE g.owner_user_id=a.user_id),0,0 FROM account a")) {
+        return false;
+    }
+
+    QSqlQuery ins5(m_db);
+    ins5.prepare("INSERT OR IGNORE INTO migration VALUES(5,'Bloodborne community website')");
+    if (!Exec(ins5))
+        return false;
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();
+    return true;
+}
+
+bool Database::RecordBloodborneWebsiteEvent(qint64 userId, BloodborneWebsiteEvent event,
+                                            int amount) {
+    if (userId <= 0 || amount <= 0 || !m_db.isOpen())
+        return false;
+
+    QString column;
+    QString eventType;
+    switch (event) {
+    case BloodborneWebsiteEvent::MessageCreated:
+        column = QStringLiteral("messages_created");
+        eventType = QStringLiteral("message_created");
+        break;
+    case BloodborneWebsiteEvent::BloodstainCreated:
+        column = QStringLiteral("bloodstains_created");
+        eventType = QStringLiteral("bloodstain_created");
+        break;
+    case BloodborneWebsiteEvent::GhostCreated:
+        column = QStringLiteral("ghosts_generated");
+        eventType = QStringLiteral("ghost_created");
+        break;
+    case BloodborneWebsiteEvent::SummonAdvertised:
+        column = QStringLiteral("summons_advertised");
+        eventType = QStringLiteral("summon_advertised");
+        break;
+    case BloodborneWebsiteEvent::SummonClaimed:
+        column = QStringLiteral("summon_claims");
+        eventType = QStringLiteral("summon_claimed");
+        break;
+    }
+
+    if (!m_db.transaction()) {
+        qWarning() << "Bloodborne website metric transaction failed:" << m_db.lastError().text();
+        return false;
+    }
+
+    QSqlQuery stats(m_db);
+    stats.prepare(QStringLiteral("INSERT INTO bloodborne_player_stats(user_id,%1) VALUES(?,?) "
+                                 "ON CONFLICT(user_id) DO UPDATE SET %1=%1+excluded.%1")
+                      .arg(column));
+    stats.addBindValue(userId);
+    stats.addBindValue(amount);
+
+    QSqlQuery activity(m_db);
+    activity.prepare(QStringLiteral(
+        "INSERT INTO bloodborne_activity(user_id,event_type,created_at) VALUES(?,?,?)"));
+    activity.addBindValue(userId);
+    activity.addBindValue(eventType);
+    activity.addBindValue(QDateTime::currentSecsSinceEpoch());
+
+    if (!stats.exec() || !activity.exec() || !m_db.commit()) {
+        qWarning() << "Bloodborne website metric write failed:"
+                   << (stats.lastError().isValid() ? stats.lastError().text()
+                                                   : activity.lastError().text());
+        m_db.rollback();
+        return false;
+    }
     return true;
 }
 

@@ -57,6 +57,14 @@ enum class DbError {
     TransactionError  // Transaction failed
 };
 
+enum class BloodborneWebsiteEvent {
+    MessageCreated,
+    BloodstainCreated,
+    GhostCreated,
+    SummonAdvertised,
+    SummonClaimed,
+};
+
 class Database {
 public:
     explicit Database(const QString& connectionName = "default");
@@ -92,6 +100,10 @@ public:
     // count, not a client-side character fingerprint, so slots are stable per shadNet
     // account and persisted in SQLite.
     QList<qint64> GetOrCreateBloodborneCharaIds(qint64 userId, int count);
+
+    // Passive community statistics used by the optional Bloodborne website. Failure to record
+    // website telemetry never changes a game-facing response.
+    bool RecordBloodborneWebsiteEvent(qint64 userId, BloodborneWebsiteEvent event, int amount = 1);
 
     // Friendship
     // Returns (status_caller, status_other). Empty = no row exists yet.

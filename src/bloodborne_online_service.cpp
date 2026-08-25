@@ -165,8 +165,9 @@ bool PurgeExpiredGhosts(QSqlDatabase db) {
 
 } // namespace
 
-OnlineService::OnlineService(Database& db, int ghostLifetimeSeconds)
-    : m_db(db), m_ghostLifetimeSeconds(std::clamp(ghostLifetimeSeconds, 60, 604800)) {}
+OnlineService::OnlineService(Database& db, int ghostLifetimeSeconds, bool websiteMetricsEnabled)
+    : m_db(db), m_ghostLifetimeSeconds(std::clamp(ghostLifetimeSeconds, 60, 604800)),
+      m_websiteMetricsEnabled(websiteMetricsEnabled) {}
 
 OnlineResult OnlineService::UploadMessengerShell(qint64 userId, const QJsonObject& request) {
     QByteArray decoded;
@@ -272,6 +273,11 @@ OnlineResult OnlineService::CreateBloodMessages(qint64 userId, const QJsonObject
 
     if (!db.commit())
         return Failure(OnlineError::Database, QStringLiteral("commit BloodMess create"));
+
+    if (m_websiteMetricsEnabled) {
+        m_db.RecordBloodborneWebsiteEvent(userId, BloodborneWebsiteEvent::MessageCreated,
+                                          messages.size());
+    }
 
     OnlineResult result = Success("BloodMessCreateResponse");
     result.response.insert(QStringLiteral("BloodMessIdList"), ids);
@@ -521,6 +527,9 @@ OnlineResult OnlineService::CreateTombMessage(qint64 userId, const QJsonObject& 
         return SqlFailure(query, QStringLiteral("create tomb message"));
 
     const qint64 id = query.lastInsertId().toLongLong();
+    if (m_websiteMetricsEnabled) {
+        m_db.RecordBloodborneWebsiteEvent(userId, BloodborneWebsiteEvent::BloodstainCreated);
+    }
     qInfo().noquote() << "[BLOODBORNE TOMB CREATE]"
                       << "user_id=" + QString::number(userId) << "id=" + QString::number(id)
                       << "area=" + QString::number(request.value(QStringLiteral("AreaId")).toInt())
@@ -659,6 +668,9 @@ OnlineResult OnlineService::CreateWanderingGhost(qint64 userId, const QJsonObjec
         return SqlFailure(query, QStringLiteral("create wandering ghost"));
 
     const qint64 id = query.lastInsertId().toLongLong();
+    if (m_websiteMetricsEnabled) {
+        m_db.RecordBloodborneWebsiteEvent(userId, BloodborneWebsiteEvent::GhostCreated);
+    }
     qInfo().noquote() << "[BLOODBORNE GHOST CREATE]"
                       << "user_id=" + QString::number(userId) << "id=" + QString::number(id)
                       << "area=" + QString::number(request.value(QStringLiteral("AreaId")).toInt())

@@ -335,7 +335,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                                        bool referenceProxyEnabled,
                                        const Bloodborne::WelcomeNotice& welcomeNotice,
                                        const Bloodborne::WelcomeMessage& welcomeMessage,
-                                       int ghostLifetimeSeconds) {
+                                       int ghostLifetimeSeconds, bool websiteMetricsEnabled) {
     http.route("/bb-eu/ss.info", QHttpServerRequest::Method::Get,
                [serverStatusInfo](const QHttpServerRequest& request) {
                    TraceRequest(QStringLiteral("ss.info"), request);
@@ -352,7 +352,8 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
     }
 
     const auto runtime = std::make_shared<BootstrapRuntime>(db, shared);
-    const auto online = std::make_shared<Bloodborne::OnlineService>(db, ghostLifetimeSeconds);
+    const auto online = std::make_shared<Bloodborne::OnlineService>(db, ghostLifetimeSeconds,
+                                                                    websiteMetricsEnabled);
 
     http.route(
         "/basic_utils/login", QHttpServerRequest::Method::Post,

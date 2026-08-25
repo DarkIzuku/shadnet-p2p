@@ -18,6 +18,6 @@ void RegisterBloodborneBootstrapRoutes(
     const QByteArray& serverStatusInfo, bool referenceProxyEnabled = false,
     const Bloodborne::WelcomeNotice& welcomeNotice = Bloodborne::WelcomeNotice{},
     const Bloodborne::WelcomeMessage& welcomeMessage = Bloodborne::WelcomeMessage{},
-    int ghostLifetimeSeconds = 600);
+    int ghostLifetimeSeconds = 600, bool websiteMetricsEnabled = false);
 
 } // namespace WebApiRoutes

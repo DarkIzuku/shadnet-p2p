@@ -29,7 +29,8 @@ struct OnlineResult {
 
 class OnlineService {
 public:
-    explicit OnlineService(Database& db, int ghostLifetimeSeconds = 600);
+    explicit OnlineService(Database& db, int ghostLifetimeSeconds = 600,
+                           bool websiteMetricsEnabled = false);
 
     OnlineResult UploadMessengerShell(qint64 userId, const QJsonObject& request);
 
@@ -50,6 +51,7 @@ public:
 private:
     Database& m_db;
     int m_ghostLifetimeSeconds;
+    bool m_websiteMetricsEnabled;
 };
 
 } // namespace Bloodborne

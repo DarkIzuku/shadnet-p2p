@@ -38,6 +38,7 @@ open for the entire session.
 | TCP | `31313` | shadNet login and game protocol |
 | UDP | `31314` | matchmaking and STUN address discovery |
 | TCP | `31315` | WebAPI and Bloodborne summon broker |
+| TCP | `31316` | Optional integrated Bloodborne community website |
 | TCP | `31320` | Optional stats page; not required for co-op |
 
 There are three addresses that are easy to confuse:
@@ -172,6 +173,9 @@ ServerLogEnabled=true
 ServerLogDirectory=logs
 ServerLogKeepDays=30
 ServerLogFlushImmediately=true
+BloodborneWebsiteEnabled=true
+BloodborneWebsitePort=31316
+BloodborneWebsiteRegistrationEnabled=true
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

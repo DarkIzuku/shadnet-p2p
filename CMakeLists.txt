@@ -6,6 +6,7 @@ include(CTest)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 # === Runtime library: must match Qt6 which always uses DLL runtime ===
 if(MSVC)
@@ -18,7 +19,7 @@ if(MSVC)
     # Remove /VERBOSE:LIB from link options (noisy, only needed for debugging)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network Sql Concurrent HttpServer)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Sql Concurrent HttpServer)
 
 add_subdirectory(externals)
 
@@ -44,6 +45,8 @@ set(SOURCES
     src/main.cpp
     src/config.cpp
     src/config.h
+    src/account_registration.cpp
+    src/account_registration.h
     src/server_logger.cpp
     src/server_logger.h
     src/server.cpp
@@ -73,6 +76,9 @@ set(SOURCES
     # WebAPI HTTP/JSON listener
     src/webapi_server.h
     src/webapi_server.cpp
+    src/bloodborne_website.h
+    src/bloodborne_website.cpp
+    web/website.qrc
     src/webapi_auth.h
     src/webapi_auth.cpp
     src/webapi_routes_users.h
@@ -113,6 +119,7 @@ target_include_directories(shadnet PRIVATE
 
 target_link_libraries(shadnet PRIVATE
     Qt6::Core
+    Qt6::Gui
     Qt6::Network
     Qt6::Sql
     Qt6::Concurrent
@@ -183,6 +190,24 @@ if(BUILD_TESTING)
     target_include_directories(test_server_logger PRIVATE src)
     target_link_libraries(test_server_logger PRIVATE Qt6::Core)
     add_test(NAME server_logger COMMAND test_server_logger)
+
+    add_executable(test_bloodborne_website EXCLUDE_FROM_ALL
+        tests/test_bloodborne_website.cpp
+        src/account_registration.cpp
+        src/bloodborne_website.cpp
+        src/config.cpp
+        src/database.cpp
+        web/website.qrc
+    )
+    target_include_directories(test_bloodborne_website PRIVATE src)
+    target_link_libraries(test_bloodborne_website PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Network
+        Qt6::Sql
+        Qt6::HttpServer
+    )
+    add_test(NAME bloodborne_website COMMAND test_bloodborne_website)
 
     add_executable(bloodborne_matching_guest_probe EXCLUDE_FROM_ALL
         tests/bloodborne_matching_guest_probe.cpp

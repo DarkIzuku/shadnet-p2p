@@ -316,6 +316,7 @@ void ClientSession::CleanupOnDisconnect() {
         }
     }
 
+    emit WebsiteDisconnected(m_info.userId, m_info.npid, !selfAppearOffline);
     qInfo() << "Client disconnected:" << m_info.npid;
 }
 

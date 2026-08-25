@@ -338,6 +338,9 @@ void ShadNetServer::SpawnSession(QTcpSocket* socket, bool isSsl) {
     connect(thread, &QThread::started, session, &ClientSession::Start);
     connect(session, &ClientSession::Disconnected, thread, &QThread::quit);
     connect(session, &ClientSession::Disconnected, session, &QObject::deleteLater);
+    connect(session, &ClientSession::WebsiteAuthenticated, this,
+            &ShadNetServer::ClientAuthenticated);
+    connect(session, &ClientSession::WebsiteDisconnected, this, &ShadNetServer::ClientDisconnected);
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 
     thread->start();

@@ -31,6 +31,10 @@ public:
         return m_shared;
     }
 
+signals:
+    void ClientAuthenticated(qint64 userId, const QString& username, bool publicVisible);
+    void ClientDisconnected(qint64 userId, const QString& username, bool publicVisible);
+
 private slots:
     void OnNewUnsecuredConnection();
 

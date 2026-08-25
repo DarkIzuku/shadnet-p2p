@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0b0c0e">
+    <title>The Hunter's Requiem</title>
+    <link rel="stylesheet" href="/assets/site.css">
+    <script src="/assets/site.js" defer></script>
+  </head>
+  <body>
+    <div class="scene" aria-hidden="true"></div>
+    <div class="fog fog-a" aria-hidden="true"></div>
+    <div class="fog fog-b" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="The Hunter's Requiem home">
+        <img class="wordmark-emblem" src="/assets/requiem-emblem.png" alt="" aria-hidden="true">
+        <span>The Hunter's Requiem</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+        <span></span><span></span><span></span>
+        <span class="sr-only" data-i18n="menu">Menu</span>
+      </button>
+      <nav id="site-nav" class="site-nav" aria-label="Primary">
+        <a href="/" data-i18n="home">Home</a>
+        <a href="/players" data-i18n="hunters">Hunters</a>
+        <a href="/#stats" data-i18n="stats">Stats</a>
+        <a href="/register" data-i18n="register">Register</a>
+        <a href="/login" data-auth-link data-i18n="login">Login</a>
+      </nav>
+      <div class="language-switch" aria-label="Language">
+        <button type="button" data-language="es">ES</button>
+        <span aria-hidden="true">|</span>
+        <button type="button" data-language="en">EN</button>
+      </div>
+    </header>
+    <main id="app" tabindex="-1">
+      <div class="loading-state"><span class="sigil"></span><span data-i18n="loading">Loading</span></div>
+    </main>
+    <footer class="site-footer">
+      <div class="rule"><span></span></div>
+      <p data-i18n="footerQuote">“May the night guide every wandering hunter.”</p>
+      <small data-i18n="unofficial">Unofficial community project. Not affiliated with Sony or FromSoftware.</small>
+    </footer>
+    <noscript>This website requires JavaScript for its community pages.</noscript>
+  </body>
+</html>

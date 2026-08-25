@@ -234,6 +234,8 @@ public:
 
 signals:
     void Disconnected();
+    void WebsiteAuthenticated(qint64 userId, const QString& username, bool publicVisible);
+    void WebsiteDisconnected(qint64 userId, const QString& username, bool publicVisible);
 
 private slots:
     void OnReadyRead();

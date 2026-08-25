@@ -266,6 +266,9 @@ int main(int argc, char *argv[]) {
   CHECK(defaultConfig.GetServerLogDirectory() == QStringLiteral("logs"));
   CHECK(defaultConfig.GetServerLogKeepDays() == 30);
   CHECK(defaultConfig.IsServerLogFlushImmediately());
+  CHECK(defaultConfig.IsBloodborneWebsiteEnabled());
+  CHECK(defaultConfig.GetBloodborneWebsitePort() == QStringLiteral("31316"));
+  CHECK(defaultConfig.IsBloodborneWebsiteRegistrationEnabled());
 
   const QString configuredPath =
       directory.filePath(QStringLiteral("configured-shadnet.cfg"));
@@ -284,6 +287,11 @@ int main(int argc, char *argv[]) {
                       QStringLiteral("custom-logs"));
     settings.setValue(QStringLiteral("ServerLogKeepDays"), 12);
     settings.setValue(QStringLiteral("ServerLogFlushImmediately"), false);
+    settings.setValue(QStringLiteral("BloodborneWebsiteEnabled"), false);
+    settings.setValue(QStringLiteral("BloodborneWebsitePort"),
+                      QStringLiteral("32316"));
+    settings.setValue(QStringLiteral("BloodborneWebsiteRegistrationEnabled"),
+                      false);
     settings.sync();
   }
   ConfigManager configured;
@@ -298,12 +306,18 @@ int main(int argc, char *argv[]) {
   CHECK(configured.GetServerLogDirectory() == QStringLiteral("custom-logs"));
   CHECK(configured.GetServerLogKeepDays() == 12);
   CHECK(!configured.IsServerLogFlushImmediately());
+  CHECK(!configured.IsBloodborneWebsiteEnabled());
+  CHECK(configured.GetBloodborneWebsitePort() == QStringLiteral("32316"));
+  CHECK(!configured.IsBloodborneWebsiteRegistrationEnabled());
 
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));
   CHECK(InsertAccount(db, QStringLiteral("Izuku"),
                       QStringLiteral("izuku@example.test"),
                       QStringLiteral("token-one")));
+  CHECK(InsertAccount(db, QStringLiteral("Mika"),
+                      QStringLiteral("mika@example.test"),
+                      QStringLiteral("token-two")));
 
   SharedState shared;
   shared.config = nullptr;
@@ -317,7 +331,7 @@ int main(int argc, char *argv[]) {
   WebApiRoutes::RegisterBloodborneBootstrapRoutes(
       http, db, shared, baseUrl, encodedLocal, false, welcomeNotice,
       enabledWelcomeMessage);
-  WebApiRoutes::RegisterBloodborneRoutes(http, false);
+  WebApiRoutes::RegisterBloodborneRoutes(http, false, &db);
   QTcpServer tcp;
   CHECK(tcp.listen(QHostAddress::LocalHost, 0));
   CHECK(http.bind(&tcp));
@@ -525,6 +539,22 @@ int main(int argc, char *argv[]) {
   CHECK(IsSuccessful(
       Post(tcp, QStringLiteral("/summon_messenger/delete"), summonDelete),
       QStringLiteral("SummonDataRemoveResponse")));
+
+  QSqlQuery websiteMetrics(db.Conn());
+  websiteMetrics.prepare(
+      QStringLiteral("SELECT summons_advertised,summon_claims FROM "
+                     "bloodborne_player_stats WHERE user_id=?"));
+  websiteMetrics.addBindValue(1);
+  CHECK(websiteMetrics.exec());
+  CHECK(websiteMetrics.next());
+  CHECK(websiteMetrics.value(0).toInt() == 1);
+  QSqlQuery requesterMetrics(db.Conn());
+  requesterMetrics.prepare(QStringLiteral(
+      "SELECT summon_claims FROM bloodborne_player_stats WHERE user_id=?"));
+  requesterMetrics.addBindValue(2);
+  CHECK(requesterMetrics.exec());
+  CHECK(requesterMetrics.next());
+  CHECK(requesterMetrics.value(0).toInt() == 1);
 
   return 0;
 }

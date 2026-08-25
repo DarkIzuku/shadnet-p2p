@@ -68,6 +68,9 @@ void ConfigManager::Parse(const QString& path) {
     m_serverLogDirectory = str("ServerLogDirectory", "logs").trimmed();
     m_serverLogKeepDays = str("ServerLogKeepDays", "30").toInt();
     m_serverLogFlushImmediately = boolean("ServerLogFlushImmediately", true);
+    m_bloodborneWebsiteEnabled = boolean("BloodborneWebsiteEnabled", true);
+    m_bloodborneWebsitePort = str("BloodborneWebsitePort", "31316").trimmed();
+    m_bloodborneWebsiteRegistrationEnabled = boolean("BloodborneWebsiteRegistrationEnabled", true);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();

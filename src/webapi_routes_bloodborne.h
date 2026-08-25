@@ -3,9 +3,11 @@
 #pragma once
 
 class QHttpServer;
+class Database;
 
 namespace WebApiRoutes {
 
-void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop);
+void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop,
+                              Database* websiteMetricsDatabase = nullptr);
 
 } // namespace WebApiRoutes
