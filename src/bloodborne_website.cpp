@@ -398,6 +398,11 @@ public:
     }
 
 private:
+    struct StaticFileData {
+        QByteArray contentType;
+        QByteArray bytes;
+    };
+
     void RegisterRoutes() {
         const auto shell = [this](const QHttpServerRequest&) { return StaticShell(); };
         m_http->route(QStringLiteral("/"), QHttpServerRequest::Method::Get, shell);
@@ -456,9 +461,9 @@ private:
             if (request.method() == QHttpServerRequest::Method::Get &&
                 !request.url().path().startsWith(QStringLiteral("/api/")) &&
                 !request.url().path().startsWith(QStringLiteral("/avatars/"))) {
-                const auto external = TryExternalResource(request.url().path(QUrl::FullyDecoded));
+                const auto external = ReadExternalResource(request.url().path(QUrl::FullyDecoded));
                 if (external.has_value()) {
-                    responder.sendResponse(std::move(*external));
+                    responder.sendResponse(ExternalResponse(*external));
                     return;
                 }
             }
@@ -531,15 +536,19 @@ private:
         return canonicalFile;
     }
 
-    std::optional<QHttpServerResponse> TryExternalResource(const QString& requestPath) const {
+    std::optional<StaticFileData> ReadExternalResource(const QString& requestPath) const {
         const auto path = ResolveExternalFile(requestPath);
         if (!path.has_value())
             return std::nullopt;
         QFile file(*path);
         if (!file.open(QIODevice::ReadOnly))
             return std::nullopt;
-        return Harden(QHttpServerResponse{StaticContentType(*path), file.readAll(), Status(200)},
-                      false, QByteArrayLiteral("no-cache"));
+        return StaticFileData{StaticContentType(*path), file.readAll()};
+    }
+
+    static QHttpServerResponse ExternalResponse(const StaticFileData& file) {
+        return Harden(QHttpServerResponse{file.contentType, file.bytes, Status(200)}, false,
+                      QByteArrayLiteral("no-cache"));
     }
 
     static QHttpServerResponse EmbeddedResource(const QString& path,
@@ -553,9 +562,9 @@ private:
 
     QHttpServerResponse StaticAsset(const QString& requestPath) const {
         if (m_externalAssetsActive) {
-            const auto external = TryExternalResource(requestPath);
+            const auto external = ReadExternalResource(requestPath);
             if (external.has_value())
-                return std::move(*external);
+                return ExternalResponse(*external);
             return JsonError(Status(404), QStringLiteral("asset_not_found"),
                              QStringLiteral("Asset not found"));
         }
@@ -577,9 +586,9 @@ private:
 
     QHttpServerResponse StaticShell() const {
         if (m_externalAssetsActive) {
-            const auto external = TryExternalResource(QStringLiteral("/index.html"));
+            const auto external = ReadExternalResource(QStringLiteral("/index.html"));
             if (external.has_value())
-                return std::move(*external);
+                return ExternalResponse(*external);
             return JsonError(Status(404), QStringLiteral("website_unavailable"),
                              QStringLiteral("Website unavailable"));
         }
