@@ -81,7 +81,9 @@ HttpResult Send(const QUrl &url, const QByteArray &method,
   } else {
     reply->abort();
   }
-  delete reply;
+  // QNetworkAccessManager owns the reply. Its destructor releases it after the
+  // copied result is complete; deleting a just-finished reply synchronously is
+  // unsafe on some Qt event dispatchers.
   return result;
 }
 
