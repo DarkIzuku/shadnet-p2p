@@ -1,5 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright 2026 shadNet Project -->
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!-- Embedded fallback uses the same customized frontend as the editable web folder. -->
 <RCC>
   <qresource prefix="/website">
     <file alias="index.html">index.html</file>
