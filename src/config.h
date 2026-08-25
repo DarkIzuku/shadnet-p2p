@@ -130,6 +130,22 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneWebsiteExternalAssetsPath;
     }
+    bool IsBloodborneWebsiteChatEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatEnabled;
+    }
+    int GetBloodborneWebsiteChatMaxMessageLength() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatMaxMessageLength;
+    }
+    int GetBloodborneWebsiteChatHistoryLimit() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatHistoryLimit;
+    }
+    int GetBloodborneWebsiteChatResetHours() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatResetHours;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -204,6 +220,10 @@ private:
     bool m_bloodborneWebsiteRegistrationEnabled = true;
     bool m_bloodborneWebsiteExternalAssetsEnabled = true;
     QString m_bloodborneWebsiteExternalAssetsPath = "web";
+    bool m_bloodborneWebsiteChatEnabled = true;
+    int m_bloodborneWebsiteChatMaxMessageLength = 400;
+    int m_bloodborneWebsiteChatHistoryLimit = 100;
+    int m_bloodborneWebsiteChatResetHours = 24;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

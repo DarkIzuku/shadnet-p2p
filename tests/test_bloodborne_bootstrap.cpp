@@ -272,6 +272,10 @@ int main(int argc, char *argv[]) {
   CHECK(defaultConfig.IsBloodborneWebsiteExternalAssetsEnabled());
   CHECK(defaultConfig.GetBloodborneWebsiteExternalAssetsPath() ==
         QStringLiteral("web"));
+  CHECK(defaultConfig.IsBloodborneWebsiteChatEnabled());
+  CHECK(defaultConfig.GetBloodborneWebsiteChatMaxMessageLength() == 400);
+  CHECK(defaultConfig.GetBloodborneWebsiteChatHistoryLimit() == 100);
+  CHECK(defaultConfig.GetBloodborneWebsiteChatResetHours() == 24);
 
   const QString configuredPath =
       directory.filePath(QStringLiteral("configured-shadnet.cfg"));
@@ -299,6 +303,11 @@ int main(int argc, char *argv[]) {
                       false);
     settings.setValue(QStringLiteral("BloodborneWebsiteExternalAssetsPath"),
                       QStringLiteral("custom-web"));
+    settings.setValue(QStringLiteral("BloodborneWebsiteChatEnabled"), false);
+    settings.setValue(QStringLiteral("BloodborneWebsiteChatMaxMessageLength"),
+                      250);
+    settings.setValue(QStringLiteral("BloodborneWebsiteChatHistoryLimit"), 50);
+    settings.setValue(QStringLiteral("BloodborneWebsiteChatResetHours"), 12);
     settings.sync();
   }
   ConfigManager configured;
@@ -319,6 +328,10 @@ int main(int argc, char *argv[]) {
   CHECK(!configured.IsBloodborneWebsiteExternalAssetsEnabled());
   CHECK(configured.GetBloodborneWebsiteExternalAssetsPath() ==
         QStringLiteral("custom-web"));
+  CHECK(!configured.IsBloodborneWebsiteChatEnabled());
+  CHECK(configured.GetBloodborneWebsiteChatMaxMessageLength() == 250);
+  CHECK(configured.GetBloodborneWebsiteChatHistoryLimit() == 50);
+  CHECK(configured.GetBloodborneWebsiteChatResetHours() == 12);
 
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));

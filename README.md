@@ -178,6 +178,10 @@ BloodborneWebsitePort=31316
 BloodborneWebsiteRegistrationEnabled=true
 BloodborneWebsiteExternalAssetsEnabled=true
 BloodborneWebsiteExternalAssetsPath=web
+BloodborneWebsiteChatEnabled=true
+BloodborneWebsiteChatMaxMessageLength=400
+BloodborneWebsiteChatHistoryLimit=100
+BloodborneWebsiteChatResetHours=24
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

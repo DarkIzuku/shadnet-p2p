@@ -34,6 +34,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTcpServer>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QUuid>
@@ -296,6 +297,7 @@ public:
         }
         CloseInterruptedPlayerSessions();
         PurgeExpiredWebSessions();
+        StartChatMaintenance();
         ConfigureFrontendAssets();
 
         m_http = std::make_unique<QHttpServer>(m_owner);
@@ -328,6 +330,9 @@ public:
     }
 
     void Stop() {
+        if (m_chatResetTimer)
+            m_chatResetTimer->stop();
+        m_chatResetTimer.reset();
         if (m_tcp && m_tcp->isListening())
             m_tcp->close();
         ClosePlayerSessionsAtShutdown();
@@ -410,6 +415,7 @@ private:
         m_http->route(QStringLiteral("/login"), QHttpServerRequest::Method::Get, shell);
         m_http->route(QStringLiteral("/players"), QHttpServerRequest::Method::Get, shell);
         m_http->route(QStringLiteral("/account"), QHttpServerRequest::Method::Get, shell);
+        m_http->route(QStringLiteral("/communion"), QHttpServerRequest::Method::Get, shell);
         m_http->route(QStringLiteral("/player/<arg>"), QHttpServerRequest::Method::Get,
                       [this](const QString&, const QHttpServerRequest&) { return StaticShell(); });
 
@@ -429,6 +435,10 @@ private:
         m_http->route(QStringLiteral("/assets/requiem-emblem.png"), QHttpServerRequest::Method::Get,
                       [this](const QHttpServerRequest&) {
                           return StaticAsset(QStringLiteral("/assets/requiem-emblem.png"));
+                      });
+        m_http->route(QStringLiteral("/assets/favicon.png"), QHttpServerRequest::Method::Get,
+                      [this](const QHttpServerRequest&) {
+                          return StaticAsset(QStringLiteral("/assets/favicon.png"));
                       });
         m_http->route(QStringLiteral("/avatars/<arg>"), QHttpServerRequest::Method::Get,
                       [this](const QString& fileName, const QHttpServerRequest&) {
@@ -455,6 +465,14 @@ private:
                       [this](const QHttpServerRequest& request) { return ApiAccount(request); });
         m_http->route(QStringLiteral("/api/account/avatar"), QHttpServerRequest::Method::Post,
                       [this](const QHttpServerRequest& request) { return ApiAvatar(request); });
+        m_http->route(QStringLiteral("/api/chat/messages"), QHttpServerRequest::Method::Get,
+                      [this](const QHttpServerRequest& request) {
+                          return ApiChatMessages(request);
+                      });
+        m_http->route(QStringLiteral("/api/chat/messages"), QHttpServerRequest::Method::Post,
+                      [this](const QHttpServerRequest& request) {
+                          return ApiChatMessageCreate(request);
+                      });
 
         m_http->setMissingHandler(m_owner, [this](const QHttpServerRequest& request,
                                                   QHttpServerResponder& responder) {
@@ -580,6 +598,9 @@ private:
         if (requestPath == QStringLiteral("/assets/requiem-emblem.png"))
             return EmbeddedResource(QStringLiteral(":/website/requiem-emblem.png"),
                                     StaticContentType(requestPath));
+        if (requestPath == QStringLiteral("/assets/favicon.png"))
+            return EmbeddedResource(QStringLiteral(":/website/favicon.png"),
+                                    StaticContentType(requestPath));
         return JsonError(Status(404), QStringLiteral("asset_not_found"),
                          QStringLiteral("Asset not found"));
     }
@@ -668,8 +689,121 @@ private:
         data.insert(QStringLiteral("messages"), messages);
         data.insert(QStringLiteral("registrationEnabled"),
                     m_config->IsBloodborneWebsiteRegistrationEnabled());
+        data.insert(QStringLiteral("chatEnabled"), m_config->IsBloodborneWebsiteChatEnabled());
         data.insert(QStringLiteral("definitions"), definitions);
         return JsonData(data);
+    }
+
+    QHttpServerResponse ApiChatMessages(const QHttpServerRequest& request) const {
+        if (!m_config->IsBloodborneWebsiteChatEnabled())
+            return ChatDisabled();
+
+        const QUrlQuery queryItems(request.url());
+        const bool hasAfter = queryItems.hasQueryItem(QStringLiteral("after"));
+        qint64 after = 0;
+        if (hasAfter) {
+            bool ok = false;
+            after = queryItems.queryItemValue(QStringLiteral("after")).toLongLong(&ok);
+            if (!ok || after < 0)
+                return JsonError(Status(400), QStringLiteral("invalid_after"),
+                                 QStringLiteral("Invalid message cursor"));
+        }
+
+        const int limit = m_config->GetBloodborneWebsiteChatHistoryLimit();
+        QSqlQuery query(m_db->Conn());
+        if (hasAfter) {
+            query.prepare(QStringLiteral(
+                "SELECT c.id,a.username,COALESCE(p.avatar_file,''),c.message,c.created_at,"
+                "c.account_id FROM bloodborne_web_chat_message c "
+                "JOIN account a ON a.user_id=c.account_id "
+                "LEFT JOIN bloodborne_web_profile p ON p.user_id=c.account_id "
+                "WHERE c.id>? ORDER BY c.id ASC LIMIT ?"));
+            query.addBindValue(after);
+            query.addBindValue(limit);
+        } else {
+            query.prepare(QStringLiteral(
+                "SELECT c.id,a.username,COALESCE(p.avatar_file,''),c.message,c.created_at,"
+                "c.account_id FROM bloodborne_web_chat_message c "
+                "JOIN account a ON a.user_id=c.account_id "
+                "LEFT JOIN bloodborne_web_profile p ON p.user_id=c.account_id "
+                "WHERE c.id IN (SELECT id FROM bloodborne_web_chat_message "
+                "ORDER BY id DESC LIMIT ?) ORDER BY c.id ASC"));
+            query.addBindValue(limit);
+        }
+        if (!query.exec())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to load chat messages"));
+
+        QJsonArray messages;
+        while (query.next())
+            messages.append(ChatMessageObject(query));
+
+        QJsonObject data;
+        data.insert(QStringLiteral("messages"), messages);
+        data.insert(QStringLiteral("historyLimit"), limit);
+        data.insert(QStringLiteral("maxMessageLength"),
+                    m_config->GetBloodborneWebsiteChatMaxMessageLength());
+        data.insert(QStringLiteral("resetHours"),
+                    m_config->GetBloodborneWebsiteChatResetHours());
+        return JsonData(data);
+    }
+
+    QHttpServerResponse ApiChatMessageCreate(const QHttpServerRequest& request) {
+        if (!m_config->IsBloodborneWebsiteChatEnabled())
+            return ChatDisabled();
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!SameOrigin(request) || !ValidCsrf(request, *session))
+            return JsonError(Status(403), QStringLiteral("csrf_rejected"),
+                             QStringLiteral("Request verification failed"));
+
+        const auto body = ParseJsonObject(request);
+        if (!body || !body->value(QStringLiteral("message")).isString())
+            return JsonError(Status(400), QStringLiteral("invalid_request"),
+                             QStringLiteral("Invalid chat message"));
+        const QString message = body->value(QStringLiteral("message")).toString();
+        if (message.trimmed().isEmpty())
+            return JsonError(Status(400), QStringLiteral("empty_message"),
+                             QStringLiteral("Message cannot be empty"));
+        if (message.contains(QChar::Null))
+            return JsonError(Status(400), QStringLiteral("invalid_message"),
+                             QStringLiteral("Message contains invalid characters"));
+        if (message.toUcs4().size() > m_config->GetBloodborneWebsiteChatMaxMessageLength())
+            return JsonError(Status(400), QStringLiteral("message_too_long"),
+                             QStringLiteral("Message is too long"));
+        if (ChatRateLimited(session->userId))
+            return JsonError(Status(429), QStringLiteral("rate_limited"),
+                             QStringLiteral("Please wait before sending another message"));
+
+        QSqlQuery insert(m_db->Conn());
+        insert.prepare(QStringLiteral(
+            "INSERT INTO bloodborne_web_chat_message(account_id,message,created_at) "
+            "VALUES(?,?,?)"));
+        insert.addBindValue(session->userId);
+        insert.addBindValue(message);
+        insert.addBindValue(QDateTime::currentSecsSinceEpoch());
+        if (!insert.exec())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to store chat message"));
+        const qint64 messageId = insert.lastInsertId().toLongLong();
+
+        QSqlQuery query(m_db->Conn());
+        query.prepare(QStringLiteral(
+            "SELECT c.id,a.username,COALESCE(p.avatar_file,''),c.message,c.created_at,"
+            "c.account_id FROM bloodborne_web_chat_message c "
+            "JOIN account a ON a.user_id=c.account_id "
+            "LEFT JOIN bloodborne_web_profile p ON p.user_id=c.account_id WHERE c.id=?"));
+        query.addBindValue(messageId);
+        if (!query.exec() || !query.next())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to load stored chat message"));
+
+        qInfo().nospace().noquote()
+            << "[BLOODBORNE WEB CHAT] message accepted account_id=" << session->userId
+            << " message_id=" << messageId << " bytes=" << message.toUtf8().size();
+        return JsonData(ChatMessageObject(query), Status(201));
     }
 
     QHttpServerResponse ApiPlayers(const QHttpServerRequest& request) const {
@@ -1032,6 +1166,51 @@ private:
                QCryptographicHash::hash(session.csrf, QCryptographicHash::Sha256);
     }
 
+    static QHttpServerResponse ChatDisabled() {
+        return JsonError(Status(503), QStringLiteral("chat_disabled"),
+                         QStringLiteral("Community chat is disabled"));
+    }
+
+    bool IsPlayerOnline(qint64 userId) const {
+        QReadLocker lock(&m_shared->clientsLock);
+        const auto client = m_shared->clients.constFind(userId);
+        return client != m_shared->clients.cend() && !client->appearOffline;
+    }
+
+    QJsonObject ChatMessageObject(const QSqlQuery& query) const {
+        const QString avatarFile = query.value(2).toString();
+        const qint64 createdAt = query.value(4).toLongLong();
+        const qint64 accountId = query.value(5).toLongLong();
+        QJsonObject message;
+        message.insert(QStringLiteral("id"), query.value(0).toLongLong());
+        message.insert(QStringLiteral("username"), query.value(1).toString());
+        message.insert(QStringLiteral("avatarUrl"), ValidAvatarFile(avatarFile)
+                                                        ? QStringLiteral("/avatars/") + avatarFile
+                                                        : QString());
+        message.insert(QStringLiteral("message"), query.value(3).toString());
+        message.insert(QStringLiteral("createdAt"),
+                       QDateTime::fromSecsSinceEpoch(createdAt, Qt::UTC).toString(Qt::ISODate));
+        message.insert(QStringLiteral("online"), IsPlayerOnline(accountId));
+        return message;
+    }
+
+    bool ChatRateLimited(qint64 accountId) {
+        constexpr qint64 OneSecondMs = 1000;
+        constexpr qint64 BurstWindowMs = 10'000;
+        constexpr int BurstMaximum = 5;
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        QMutexLocker lock(&m_rateMutex);
+        QList<qint64>& events = m_chatRateEvents[accountId];
+        while (!events.isEmpty() && events.front() <= now - BurstWindowMs)
+            events.pop_front();
+        if ((!events.isEmpty() && events.back() > now - OneSecondMs) ||
+            events.size() >= BurstMaximum) {
+            return true;
+        }
+        events.append(now);
+        return false;
+    }
+
     bool RateLimited(const QHttpServerRequest& request, const QString& action, int maximum,
                      int windowSeconds) {
         const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -1044,6 +1223,62 @@ private:
             return true;
         events.append(now);
         return false;
+    }
+
+    void StartChatMaintenance() {
+        if (!m_config->IsBloodborneWebsiteChatEnabled())
+            return;
+        ResetChatIfDue();
+        m_chatResetTimer = std::make_unique<QTimer>();
+        m_chatResetTimer->setInterval(60 * 1000);
+        QObject::connect(m_chatResetTimer.get(), &QTimer::timeout, m_owner,
+                         [this] { ResetChatIfDue(); });
+        m_chatResetTimer->start();
+    }
+
+    void ResetChatIfDue() {
+        if (!m_db || !m_config->IsBloodborneWebsiteChatEnabled())
+            return;
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        const qint64 resetSeconds =
+            static_cast<qint64>(m_config->GetBloodborneWebsiteChatResetHours()) * 60 * 60;
+        QSqlDatabase db = m_db->Conn();
+        QSqlQuery state(db);
+        state.prepare(QStringLiteral(
+            "SELECT value FROM bloodborne_web_chat_state WHERE key='last_chat_reset'"));
+        if (!state.exec() || !state.next()) {
+            qWarning() << "Bloodborne website chat reset state could not be read:"
+                       << state.lastError().text();
+            return;
+        }
+        const qint64 lastReset = state.value(0).toLongLong();
+        if (lastReset > 0 && now - lastReset < resetSeconds)
+            return;
+        state.finish();
+
+        if (!db.transaction()) {
+            qWarning() << "Bloodborne website chat reset transaction could not start:"
+                       << db.lastError().text();
+            return;
+        }
+        QSqlQuery remove(db);
+        if (!remove.exec(QStringLiteral("DELETE FROM bloodborne_web_chat_message"))) {
+            db.rollback();
+            qWarning() << "Bloodborne website chat reset failed:" << remove.lastError().text();
+            return;
+        }
+        const qint64 deleted = remove.numRowsAffected();
+        QSqlQuery update(db);
+        update.prepare(QStringLiteral(
+            "UPDATE bloodborne_web_chat_state SET value=? WHERE key='last_chat_reset'"));
+        update.addBindValue(now);
+        if (!update.exec() || !db.commit()) {
+            db.rollback();
+            qWarning() << "Bloodborne website chat reset state update failed:"
+                       << update.lastError().text();
+            return;
+        }
+        qInfo().nospace().noquote() << "[BLOODBORNE WEB CHAT RESET] deleted=" << deleted;
     }
 
     std::optional<QJsonObject> PlayerObject(qint64 userId, const QString& username,
@@ -1196,12 +1431,14 @@ private:
     std::unique_ptr<Database> m_db;
     std::unique_ptr<QHttpServer> m_http;
     std::unique_ptr<QTcpServer> m_tcp;
+    std::unique_ptr<QTimer> m_chatResetTimer;
     QString m_dataRoot;
     QString m_avatarDirectory;
     QString m_externalAssetsRoot;
     bool m_externalAssetsActive = false;
     QMutex m_rateMutex;
     QHash<QString, QList<qint64>> m_rateEvents;
+    QHash<qint64, QList<qint64>> m_chatRateEvents;
 };
 
 BloodborneWebsiteServer::BloodborneWebsiteServer(QObject* parent)

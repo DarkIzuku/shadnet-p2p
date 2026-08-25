@@ -17,6 +17,10 @@ BloodborneWebsitePort=31316
 BloodborneWebsiteRegistrationEnabled=true
 BloodborneWebsiteExternalAssetsEnabled=true
 BloodborneWebsiteExternalAssetsPath=web
+BloodborneWebsiteChatEnabled=true
+BloodborneWebsiteChatMaxMessageLength=400
+BloodborneWebsiteChatHistoryLimit=100
+BloodborneWebsiteChatResetHours=24
 ```
 
 Open `http://SERVER_ADDRESS:31316/`. `BloodborneWebsiteEnabled=false` leaves the listener closed
@@ -80,9 +84,43 @@ The embedded bilingual ES/EN site includes:
 - `/`, `/players`, and `/player/<username>` for public community status;
 - `/register` and `/login` for the shared shadNet account system;
 - `/account` for the authenticated profile and avatar upload;
+- `/communion` for the global Hunter's Communion chat;
 - `/api/status`, `/api/players`, `/api/players/<username>`, and `/api/activity`;
 - `/api/register`, `/api/login`, `/api/logout`, `/api/account`, and
   `/api/account/avatar`.
+
+## Hunter's Communion
+
+The bilingual **Hunter's Communion / Comunión de Cazadores** is a website-only global chat. Public
+visitors may read it, while posting requires an existing shadNet account, a valid independent web
+session, same-origin validation, and the session-derived CSRF header. The backend ignores any
+client-supplied author, account, or avatar fields and resolves all three from the authenticated
+account and profile.
+
+The website API is:
+
+- `GET /api/chat/messages` — returns the newest configured history window in chronological order;
+- `GET /api/chat/messages?after=<id>` — returns only rows with a larger ID for two-second
+  incremental polling;
+- `POST /api/chat/messages` — accepts JSON `{ "message": "..." }` from an authenticated session.
+
+Messages are UTF-8 text, not HTML. The browser inserts them using `textContent`, preserves line
+breaks, and renders their UTC server timestamp in the visitor's local time zone. The default
+length limit is 400 Unicode code points. Posting is limited per authenticated account to one
+accepted message per second and no more than five accepted messages in any ten-second window.
+
+Migration 6 adds `bloodborne_web_chat_message`, which relates every message to the real `account`
+row, and `bloodborne_web_chat_state`, which persists `last_chat_reset`. When chat is enabled, the
+server checks the reset before opening the website listener and then every minute without relying
+on a browser request. Once `BloodborneWebsiteChatResetHours` has elapsed, one transaction deletes
+only chat rows and advances the reset time. Accounts, profiles, avatars, web/game sessions,
+activity, statistics, Blood Messenger, Tomb Messenger, Death Vision, Wandering Ghost, summons,
+and multiplayer state are untouched.
+
+Set `BloodborneWebsiteChatEnabled=false` to hide the navigation entry and make both chat endpoints
+return a `chat_disabled` response without writing. `BloodborneWebsiteChatHistoryLimit` controls
+the initial and incremental response cap; `BloodborneWebsiteChatMaxMessageLength` and
+`BloodborneWebsiteChatResetHours` control validation and retention.
 
 The interface language preference is stored only in browser `localStorage`. Usernames and all
 player-created data are inserted with DOM `textContent` and are never translated or interpreted as
@@ -130,6 +168,11 @@ Migration 5 adds these non-destructive tables alongside the existing schema:
 - `bloodborne_web_session`
 - `bloodborne_web_profile`
 - `bloodborne_activity`
+
+Migration 6 adds only:
+
+- `bloodborne_web_chat_message`
+- `bloodborne_web_chat_state`
 
 Existing account, Blood Messenger, Tomb/Death Vision, Wandering Ghost, SummonBroker, Matching2,
 STUN, and signaling tables and contracts are not replaced.

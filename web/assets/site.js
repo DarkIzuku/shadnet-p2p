@@ -26,6 +26,7 @@
       successfulCoopPending: "Successful co-op history", notMeasured: "Not measured yet",
       registerTitle: "Join the Hunt", registerLead: "Create a normal shadNet account for the game and this community.",
       username: "Username", password: "Password", confirmPassword: "Confirm password",
+      showPassword: "Show password", hidePassword: "Hide password",
       create: "Create Account", registrationClosed: "Registration is currently closed.",
       accountCreated: "Account created. You can now enter the dream.", alreadyAccount: "Already registered?",
       loginTitle: "Enter the Dream", loginLead: "Use the same shadNet account you use in the game.",
@@ -39,7 +40,12 @@
       secondsAgo: "just now", minuteAgo: "1 minute ago", minutesAgo: "{n} minutes ago",
       hourAgo: "1 hour ago", hoursAgo: "{n} hours ago", dayAgo: "1 day ago", daysAgo: "{n} days ago",
       unknown: "Unknown", requestFailed: "The server could not complete the request.",
-      exactMetrics: "Live values derived directly from authenticated clients, accounts, Matching2 rooms and stored messages."
+      exactMetrics: "Live values derived directly from authenticated clients, accounts, Matching2 rooms and stored messages.",
+      communion: "Communion", communionTitle: "Hunter's Communion",
+      communionLead: "Share words with every hunter gathered beyond the veil.",
+      huntersListening: "{n} hunters online", noChatMessages: "The communion is silent.",
+      chatPlaceholder: "Write a message...", send: "Send", loginToChat: "Enter the dream to speak.",
+      chatReset: "The communion is cleansed every {n} hours.", chatTooFast: "Wait a moment before speaking again."
     },
     es: {
       menu: "Menú", home: "Inicio", hunters: "Cazadores", stats: "Estadísticas", register: "Registro",
@@ -63,6 +69,7 @@
       successfulCoopPending: "Historial de co-op exitoso", notMeasured: "Aún no medido",
       registerTitle: "Únete a la caza", registerLead: "Crea una cuenta shadNet normal para el juego y esta comunidad.",
       username: "Usuario", password: "Contraseña", confirmPassword: "Confirmar contraseña",
+      showPassword: "Mostrar contraseña", hidePassword: "Ocultar contraseña",
       create: "Crear cuenta", registrationClosed: "El registro está cerrado actualmente.",
       accountCreated: "Cuenta creada. Ya puedes entrar al sueño.", alreadyAccount: "¿Ya tienes cuenta?",
       loginTitle: "Entra al sueño", loginLead: "Usa la misma cuenta shadNet que utilizas en el juego.",
@@ -76,13 +83,22 @@
       secondsAgo: "ahora mismo", minuteAgo: "hace 1 minuto", minutesAgo: "hace {n} minutos",
       hourAgo: "hace 1 hora", hoursAgo: "hace {n} horas", dayAgo: "hace 1 día", daysAgo: "hace {n} días",
       unknown: "Desconocido", requestFailed: "El servidor no pudo completar la solicitud.",
-      exactMetrics: "Valores en vivo obtenidos directamente de clientes autenticados, cuentas, salas Matching2 y mensajes almacenados."
+      exactMetrics: "Valores en vivo obtenidos directamente de clientes autenticados, cuentas, salas Matching2 y mensajes almacenados.",
+      communion: "Comunión", communionTitle: "Comunión de Cazadores",
+      communionLead: "Comparte palabras con todos los cazadores reunidos más allá del velo.",
+      huntersListening: "{n} cazadores en línea", noChatMessages: "La comunión guarda silencio.",
+      chatPlaceholder: "Escribe un mensaje...", send: "Enviar", loginToChat: "Entra al sueño para hablar.",
+      chatReset: "La comunión se purifica cada {n} horas.", chatTooFast: "Espera un momento antes de volver a hablar."
     }
   };
 
   const state = {
     language: localStorage.getItem("thr-language") === "en" ? "en" : "es",
-    account: null
+    account: null,
+    websiteStatus: null,
+    chatEnabled: false,
+    chatPollTimer: null,
+    chatPollGeneration: 0
   };
   const app = document.getElementById("app");
   const t = (key, values = {}) => {
@@ -159,6 +175,14 @@
     return new Intl.DateTimeFormat(state.language === "es" ? "es-ES" : "en-US", {
       year: "numeric", month: "long", day: "numeric"
     }).format(new Date(Number(timestamp) * 1000));
+  }
+
+  function localTime(isoTimestamp) {
+    const date = new Date(isoTimestamp);
+    if (Number.isNaN(date.getTime())) return "";
+    return new Intl.DateTimeFormat(state.language === "es" ? "es-ES" : "en-US", {
+      hour: "2-digit", minute: "2-digit"
+    }).format(date);
   }
 
   function avatar(player, large = false) {
@@ -247,6 +271,9 @@
     const [status, playersData, activityData] = await Promise.all([
       api("/api/status"), api("/api/players?online=true&limit=6"), api("/api/activity?limit=6")
     ]);
+    state.websiteStatus = status;
+    state.chatEnabled = status.chatEnabled === true;
+    updateChatNav();
     const strip = node("section", "stats-strip"); strip.id = "stats";
     const stats = [
       ["huntersOnline", status.huntersOnline, "nowInDream"],
@@ -304,6 +331,125 @@
     await load();
   }
 
+  function stopChatPolling() {
+    state.chatPollGeneration += 1;
+    if (state.chatPollTimer !== null) clearTimeout(state.chatPollTimer);
+    state.chatPollTimer = null;
+  }
+
+  function chatMessageRow(message) {
+    const row = node("article", "chat-message");
+    const profile = node("a", "chat-avatar-link");
+    profile.href = `/player/${encodeURIComponent(message.username)}`;
+    profile.append(avatar(message));
+    const content = node("div", "chat-message-content");
+    const header = node("div", "chat-message-header");
+    const author = node("a", "chat-author", message.username);
+    author.href = profile.href;
+    const presence = node("span", `status-dot${message.online ? " online" : ""}`);
+    presence.setAttribute("aria-label", message.online ? t("online") : t("offline"));
+    const time = node("time", "chat-time", localTime(message.createdAt));
+    time.dateTime = message.createdAt;
+    header.append(presence, author, time);
+    content.append(header, node("p", "chat-text", message.message));
+    row.append(profile, content);
+    return row;
+  }
+
+  async function renderCommunion() {
+    if (!state.chatEnabled) throw new Error(t("unavailable"));
+    const generation = ++state.chatPollGeneration;
+    const page = setPage("page inner-page communion-page");
+    titleBlock(page, "communionTitle", "communionLead");
+    const [initial, status] = await Promise.all([
+      api("/api/chat/messages"), state.websiteStatus ? Promise.resolve(state.websiteStatus) : api("/api/status")
+    ]);
+    if (generation !== state.chatPollGeneration || location.pathname !== "/communion") return;
+    state.websiteStatus = status;
+
+    const panel = node("section", "chat-panel");
+    const header = node("div", "chat-panel-header");
+    header.append(node("span", "chat-online", t("huntersListening", { n: formatNumber(status.huntersOnline) })),
+      node("span", "chat-reset-note", t("chatReset", { n: initial.resetHours })));
+    const scroller = node("div", "chat-scroll");
+    const list = node("div", "chat-list");
+    scroller.append(list);
+    const knownIds = new Set();
+    let lastId = 0;
+
+    const appendMessages = (messages, forceScroll = false) => {
+      const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96;
+      const empty = list.querySelector(".empty-state");
+      if (messages.length && empty) empty.remove();
+      messages.forEach((message) => {
+        const id = Number(message.id);
+        if (!Number.isFinite(id) || knownIds.has(id)) return;
+        knownIds.add(id);
+        lastId = Math.max(lastId, id);
+        list.append(chatMessageRow(message));
+      });
+      if (!list.children.length) list.append(node("div", "empty-state", t("noChatMessages")));
+      if (forceScroll || nearBottom) scroller.scrollTop = scroller.scrollHeight;
+    };
+    appendMessages(initial.messages, true);
+    panel.append(header, scroller);
+
+    if (state.account) {
+      const form = node("form", "chat-composer");
+      const input = document.createElement("textarea");
+      input.className = "chat-input";
+      input.rows = 2;
+      input.maxLength = initial.maxMessageLength;
+      input.placeholder = t("chatPlaceholder");
+      input.setAttribute("aria-label", t("chatPlaceholder"));
+      const send = node("button", "button primary chat-send", t("send"));
+      send.type = "submit";
+      const feedback = node("p", "form-message chat-feedback");
+      form.append(input, send, feedback);
+      const submit = async () => {
+        if (!input.value.trim() || send.disabled) return;
+        send.disabled = true;
+        feedback.textContent = "";
+        try {
+          const message = await api("/api/chat/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": state.account.csrfToken },
+            body: JSON.stringify({ message: input.value })
+          });
+          input.value = "";
+          appendMessages([message], true);
+        } catch (error) {
+          feedback.className = "form-message error chat-feedback";
+          feedback.textContent = error.code === "rate_limited" ? t("chatTooFast") : error.message;
+        } finally { send.disabled = false; }
+      };
+      form.addEventListener("submit", (event) => { event.preventDefault(); submit(); });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); }
+      });
+      panel.append(form);
+    } else {
+      const prompt = node("div", "chat-login-prompt");
+      const link = node("a", "text-link", t("loginToChat"));
+      link.href = "/login";
+      prompt.append(link);
+      panel.append(prompt);
+    }
+    page.append(panel);
+
+    const poll = async () => {
+      if (generation !== state.chatPollGeneration || location.pathname !== "/communion") return;
+      try {
+        const update = await api(`/api/chat/messages?after=${lastId}`);
+        if (generation === state.chatPollGeneration) appendMessages(update.messages);
+      } catch (_) {}
+      if (generation === state.chatPollGeneration && location.pathname === "/communion") {
+        state.chatPollTimer = setTimeout(poll, 2000);
+      }
+    };
+    state.chatPollTimer = setTimeout(poll, 2000);
+  }
+
   function metricList(entries) {
     const list = node("dl", "metric-list");
     entries.forEach(([label, value, pending]) => {
@@ -339,13 +485,73 @@
     const page = setPage(); renderProfileData(page, player);
   }
 
-  function field(labelKey, name, type, autocomplete) {
+  function field(labelKey, name, type, autocomplete, passwordToggle = false) {
     const wrapper = node("div", "field");
-    const label = node("label", "", t(labelKey)); label.htmlFor = `field-${name}`;
-    const input = document.createElement("input"); input.id = `field-${name}`; input.name = name; input.type = type; input.autocomplete = autocomplete; input.required = true;
-    if (name === "username") { input.minLength = 3; input.maxLength = 16; input.pattern = "[A-Za-z0-9_-]+"; }
-    if (type === "password") { input.minLength = 8; input.maxLength = 128; }
-    wrapper.append(label, input); return wrapper;
+    const label = node("label", "", t(labelKey));
+    label.htmlFor = `field-${name}`;
+
+    const input = document.createElement("input");
+    input.id = `field-${name}`;
+    input.name = name;
+    input.type = type;
+    input.autocomplete = autocomplete;
+    input.required = true;
+
+    if (name === "username") {
+      input.minLength = 3;
+      input.maxLength = 16;
+      input.pattern = "[A-Za-z0-9_-]+";
+    }
+
+    if (type === "password") {
+      input.minLength = 8;
+      input.maxLength = 128;
+    }
+
+    wrapper.append(label);
+
+    if (type === "password" && passwordToggle) {
+      const passwordWrapper = node("div", "password-input-wrapper");
+
+      const toggle = node("button", "password-eye");
+      toggle.type = "button";
+      toggle.setAttribute("aria-label", t("showPassword"));
+      toggle.setAttribute("title", t("showPassword"));
+      toggle.setAttribute("aria-pressed", "false");
+
+      toggle.innerHTML = `
+        <svg class="eye-icon eye-open" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+          <circle cx="12" cy="12" r="2.8"></circle>
+        </svg>
+
+        <svg class="eye-icon eye-closed" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 3l18 18"></path>
+          <path d="M10.6 6.2A10 10 0 0 1 12 6c6 0 9.5 6 9.5 6s-1.3 2.2-3 3.7"></path>
+          <path d="M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6a10 10 0 0 0 4.2-.9"></path>
+          <path d="M10 10a2.8 2.8 0 0 0 4 4"></path>
+        </svg>
+      `;
+
+      toggle.addEventListener("click", () => {
+        const visible = input.type === "text";
+
+        input.type = visible ? "password" : "text";
+        toggle.classList.toggle("showing", !visible);
+
+        const labelText = t(visible ? "showPassword" : "hidePassword");
+        toggle.setAttribute("aria-label", labelText);
+        toggle.setAttribute("title", labelText);
+        toggle.setAttribute("aria-pressed", visible ? "false" : "true");
+      });
+
+      passwordWrapper.append(input, toggle);
+      wrapper.append(passwordWrapper);
+    } else {
+      wrapper.append(input);
+    }
+
+    return wrapper;
   }
 
   async function renderRegister() {
@@ -353,7 +559,11 @@
     const page = setPage(); titleBlock(page, "registerTitle", "registerLead");
     if (!status.registrationEnabled) { page.append(node("div", "closed-notice", t("registrationClosed"))); return; }
     const panel = node("section", "form-panel"); const form = node("form", "form-stack");
-    form.append(field("username", "username", "text", "username"), field("password", "password", "password", "new-password"), field("confirmPassword", "confirmPassword", "password", "new-password"));
+    form.append(
+      field("username", "username", "text", "username"),
+      field("password", "password", "password", "new-password", true),
+      field("confirmPassword", "confirmPassword", "password", "new-password", true)
+    );
     const button = node("button", "button primary", t("create")); button.type = "submit";
     const message = node("p", "form-message");
     const alt = node("p", "form-alternate", t("alreadyAccount") + " "); const link = node("a", "text-link", t("login")); link.href = "/login"; alt.append(link);
@@ -427,7 +637,19 @@
     link.textContent = t(link.dataset.i18n);
   }
 
+  function updateChatNav() {
+    const link = document.querySelector("[data-chat-link]");
+    if (link) link.hidden = !state.chatEnabled;
+  }
+
+  async function refreshWebsiteStatus() {
+    state.websiteStatus = await api("/api/status");
+    state.chatEnabled = state.websiteStatus.chatEnabled === true;
+    updateChatNav();
+  }
+
   async function renderRoute() {
+    stopChatPolling();
     document.querySelector(".site-nav")?.classList.remove("open");
     try {
       const path = location.pathname;
@@ -441,6 +663,7 @@
       else if (path === "/register") await renderRegister();
       else if (path === "/login") await renderLogin();
       else if (path === "/account") await renderAccount();
+      else if (path === "/communion") await renderCommunion();
       else showError(new Error("Not found"));
       if (location.hash) document.querySelector(location.hash)?.scrollIntoView({ behavior: "smooth" });
     } catch (error) { showError(error); }
@@ -463,5 +686,5 @@
   addEventListener("popstate", renderRoute);
 
   applyLanguage();
-  refreshAccount().catch(() => { state.account = null; updateAuthNav(); }).finally(renderRoute);
+  Promise.allSettled([refreshAccount(), refreshWebsiteStatus()]).finally(renderRoute);
 })();

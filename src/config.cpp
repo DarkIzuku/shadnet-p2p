@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <QDebug>
+#include <algorithm>
 #include <QFile>
 #include <QSettings>
 #include <QTextStream>
@@ -75,6 +76,13 @@ void ConfigManager::Parse(const QString& path) {
         boolean("BloodborneWebsiteExternalAssetsEnabled", true);
     m_bloodborneWebsiteExternalAssetsPath =
         str("BloodborneWebsiteExternalAssetsPath", "web").trimmed();
+    m_bloodborneWebsiteChatEnabled = boolean("BloodborneWebsiteChatEnabled", true);
+    m_bloodborneWebsiteChatMaxMessageLength =
+        std::clamp(str("BloodborneWebsiteChatMaxMessageLength", "400").toInt(), 1, 4000);
+    m_bloodborneWebsiteChatHistoryLimit =
+        std::clamp(str("BloodborneWebsiteChatHistoryLimit", "100").toInt(), 1, 500);
+    m_bloodborneWebsiteChatResetHours =
+        std::clamp(str("BloodborneWebsiteChatResetHours", "24").toInt(), 1, 8760);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();

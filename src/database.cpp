@@ -347,6 +347,31 @@ bool Database::Migrate() {
     if (!Exec(ins5))
         return false;
 
+    const QStringList stmts6 = {
+        "CREATE TABLE IF NOT EXISTS bloodborne_web_chat_message("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  account_id INTEGER NOT NULL REFERENCES account(user_id) ON DELETE CASCADE,"
+        "  message TEXT NOT NULL,"
+        "  created_at INTEGER NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_web_chat_message_recent "
+        "ON bloodborne_web_chat_message(created_at,id)",
+        "CREATE TABLE IF NOT EXISTS bloodborne_web_chat_state("
+        "  key TEXT PRIMARY KEY,"
+        "  value INTEGER NOT NULL)",
+        "INSERT OR IGNORE INTO bloodborne_web_chat_state(key,value) "
+        "VALUES('last_chat_reset',CAST(strftime('%s','now') AS INTEGER))",
+    };
+
+    for (const QString& statement : stmts6) {
+        if (!Exec(statement))
+            return false;
+    }
+
+    QSqlQuery ins6(m_db);
+    ins6.prepare("INSERT OR IGNORE INTO migration VALUES(6,'Bloodborne website global chat')");
+    if (!Exec(ins6))
+        return false;
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();

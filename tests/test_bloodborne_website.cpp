@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFile>
+#include <QHash>
 #include <QHostAddress>
 #include <QImage>
 #include <QJsonArray>
@@ -16,9 +17,12 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSettings>
+#include <QSet>
 #include <QSqlQuery>
+#include <QStringList>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUuid>
 
@@ -151,7 +155,9 @@ HttpResult Json(const BloodborneWebsiteServer &server, const QString &path,
 void WriteConfig(const QString &path, bool enabled, bool registrationEnabled,
                  bool externalAssetsEnabled = true,
                  const QString &externalAssetsPath =
-                     QStringLiteral("website-assets-missing-for-tests")) {
+                     QStringLiteral("website-assets-missing-for-tests"),
+                 bool chatEnabled = true, int chatMaxMessageLength = 400,
+                 int chatHistoryLimit = 100, int chatResetHours = 24) {
   QSettings settings(path, QSettings::IniFormat);
   settings.setValue(QStringLiteral("Host"), QStringLiteral("127.0.0.1"));
   settings.setValue(QStringLiteral("WebApiPort"), QStringLiteral("31315"));
@@ -164,6 +170,14 @@ void WriteConfig(const QString &path, bool enabled, bool registrationEnabled,
                     externalAssetsEnabled);
   settings.setValue(QStringLiteral("BloodborneWebsiteExternalAssetsPath"),
                     externalAssetsPath);
+  settings.setValue(QStringLiteral("BloodborneWebsiteChatEnabled"),
+                    chatEnabled);
+  settings.setValue(QStringLiteral("BloodborneWebsiteChatMaxMessageLength"),
+                    chatMaxMessageLength);
+  settings.setValue(QStringLiteral("BloodborneWebsiteChatHistoryLimit"),
+                    chatHistoryLimit);
+  settings.setValue(QStringLiteral("BloodborneWebsiteChatResetHours"),
+                    chatResetHours);
   settings.sync();
 }
 
@@ -236,8 +250,39 @@ int main(int argc, char *argv[]) {
         QStringLiteral("registration_closed"));
   closed.Stop();
 
+  const QString chatDisabledPath =
+      temporary.filePath(QStringLiteral("chat-disabled.cfg"));
+  WriteConfig(chatDisabledPath, true, true, true,
+              QStringLiteral("website-assets-missing-for-tests"), false);
+  ConfigManager chatDisabledConfig;
+  chatDisabledConfig.Load(chatDisabledPath);
+  shared.config = &chatDisabledConfig;
+  BloodborneWebsiteServer chatDisabled;
+  CHECK(chatDisabled.Start(&chatDisabledConfig, dbPath, &shared));
+  const HttpResult disabledChatRead =
+      Send(Url(chatDisabled, QStringLiteral("/api/chat/messages")),
+           QByteArrayLiteral("GET"));
+  CHECK(disabledChatRead.status == 503);
+  CHECK(Error(disabledChatRead).value(QStringLiteral("code")).toString() ==
+        QStringLiteral("chat_disabled"));
+  const HttpResult disabledChatWrite =
+      Json(chatDisabled, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), QStringLiteral("hidden")}});
+  CHECK(disabledChatWrite.status == 503);
+  {
+    QSqlQuery disabledChatCount(QSqlDatabase::database(
+        QStringLiteral("bloodborne_website_main")));
+    CHECK(disabledChatCount.exec(QStringLiteral(
+        "SELECT COUNT(*) FROM bloodborne_web_chat_message")));
+    CHECK(disabledChatCount.next());
+    CHECK(disabledChatCount.value(0).toInt() == 0);
+  }
+  chatDisabled.Stop();
+
   const QString configPath = temporary.filePath(QStringLiteral("website.cfg"));
-  WriteConfig(configPath, true, true);
+  WriteConfig(configPath, true, true, true,
+              QStringLiteral("website-assets-missing-for-tests"), true, 400,
+              3, 24);
   ConfigManager config;
   config.Load(configPath);
   shared.config = &config;
@@ -251,6 +296,8 @@ int main(int argc, char *argv[]) {
   CHECK(home.status == 200);
   CHECK(home.body.contains("The Hunter's Requiem"));
   CHECK(home.body.contains("/assets/requiem-emblem.png"));
+  CHECK(home.body.contains("/assets/favicon.png"));
+  CHECK(home.body.contains("/communion"));
   CHECK(HasHeader(home, QByteArrayLiteral("X-Content-Type-Options"),
                   QByteArrayLiteral("nosniff")));
   CHECK(HasHeader(home, QByteArrayLiteral("X-Frame-Options"),
@@ -264,6 +311,29 @@ int main(int argc, char *argv[]) {
   CHECK(script.body.contains(
       "Un servidor comunitario no oficial para cazadores errantes."));
   CHECK(script.body.contains("textContent"));
+  CHECK(script.body.contains("Hunter's Communion"));
+  CHECK(script.body.contains("Comunión de Cazadores"));
+  CHECK(script.body.contains("/api/chat/messages"));
+  CHECK(script.body.contains("password-eye"));
+
+  const HttpResult style = Send(Url(server, QStringLiteral("/assets/site.css")),
+                                QByteArrayLiteral("GET"));
+  CHECK(style.status == 200);
+  CHECK(style.body.contains(".chat-panel"));
+  CHECK(style.body.contains(".password-eye"));
+  CHECK(Send(Url(server, QStringLiteral("/assets/favicon.png")),
+             QByteArrayLiteral("GET"))
+            .status == 200);
+
+  const HttpResult initialChat =
+      Send(Url(server, QStringLiteral("/api/chat/messages")),
+           QByteArrayLiteral("GET"));
+  CHECK(initialChat.status == 200);
+  CHECK(Data(initialChat).value(QStringLiteral("messages")).toArray().isEmpty());
+  CHECK(Data(initialChat).value(QStringLiteral("historyLimit")).toInt() == 3);
+  CHECK(Data(initialChat)
+            .value(QStringLiteral("maxMessageLength"))
+            .toInt() == 400);
 
   const HttpResult initialStatus = Send(
       Url(server, QStringLiteral("/api/status")), QByteArrayLiteral("GET"));
@@ -274,6 +344,7 @@ int main(int argc, char *argv[]) {
   CHECK(Data(initialStatus)
             .value(QStringLiteral("registeredHunters"))
             .toInt(-1) == 0);
+  CHECK(Data(initialStatus).value(QStringLiteral("chatEnabled")).toBool());
 
   const QJsonObject registration = {
       {QStringLiteral("username"), QStringLiteral("Izuku")},
@@ -383,6 +454,122 @@ int main(int argc, char *argv[]) {
             .value(QStringLiteral("username"))
             .toString() == QStringLiteral("Izuku"));
 
+  const HttpResult anonymousChatWrite =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), QStringLiteral("anonymous")}});
+  CHECK(anonymousChatWrite.status == 401);
+  const HttpResult chatCsrfRejected =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), QStringLiteral("forged csrf")}},
+           login.cookie, QByteArrayLiteral("incorrect"));
+  CHECK(chatCsrfRejected.status == 403);
+  const HttpResult invalidChatJson =
+      Send(Url(server, QStringLiteral("/api/chat/messages")),
+           QByteArrayLiteral("POST"), QByteArrayLiteral("not-json"),
+           QByteArrayLiteral("application/json"), login.cookie, csrf);
+  CHECK(invalidChatJson.status == 400);
+  const HttpResult emptyChat =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), QStringLiteral("  \n\t  ")}},
+           login.cookie, csrf);
+  CHECK(emptyChat.status == 400);
+  const HttpResult longChat =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), QString(401, QLatin1Char('x'))}},
+           login.cookie, csrf);
+  CHECK(longChat.status == 400);
+
+  const QString unicodeMessage =
+      QStringLiteral("¡Buenas noches, cazadores! Ñandú 😀");
+  const HttpResult chatCreated =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), unicodeMessage},
+            {QStringLiteral("account_id"), 9999},
+            {QStringLiteral("username"), QStringLiteral("Mika")},
+            {QStringLiteral("avatar"), QStringLiteral("/avatars/forged.png")}},
+           login.cookie, csrf);
+  CHECK(chatCreated.status == 201);
+  const QJsonObject firstChat = Data(chatCreated);
+  CHECK(firstChat.value(QStringLiteral("username")).toString() ==
+        QStringLiteral("Izuku"));
+  CHECK(firstChat.value(QStringLiteral("avatarUrl")).toString() == avatarUrl);
+  CHECK(firstChat.value(QStringLiteral("message")).toString() == unicodeMessage);
+  CHECK(firstChat.value(QStringLiteral("online")).toBool());
+  CHECK(!firstChat.contains(QStringLiteral("account_id")));
+  CHECK(QDateTime::fromString(firstChat.value(QStringLiteral("createdAt"))
+                                  .toString(),
+                              Qt::ISODate)
+            .isValid());
+
+  const HttpResult chatRateLimited =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), QStringLiteral("too fast")}},
+           login.cookie, csrf);
+  CHECK(chatRateLimited.status == 429);
+  QThread::msleep(1050);
+  const QString xssMessage =
+      QStringLiteral("<script>alert('old blood')</script><b>literal</b>");
+  const HttpResult xssChat =
+      Json(server, QStringLiteral("/api/chat/messages"),
+           {{QStringLiteral("message"), xssMessage}}, login.cookie, csrf);
+  CHECK(xssChat.status == 201);
+  CHECK(Data(xssChat).value(QStringLiteral("message")).toString() == xssMessage);
+
+  QSqlQuery injectChat(verification.Conn());
+  injectChat.prepare(QStringLiteral(
+      "INSERT INTO bloodborne_web_chat_message(account_id,message,created_at) "
+      "VALUES(?,?,?)"));
+  for (int index = 0; index < 4; ++index) {
+    injectChat.bindValue(0, account->userId);
+    injectChat.bindValue(1, QStringLiteral("history-%1").arg(index));
+    injectChat.bindValue(2, QDateTime::currentSecsSinceEpoch() + index);
+    CHECK(injectChat.exec());
+  }
+
+  const HttpResult recentChat =
+      Send(Url(server, QStringLiteral("/api/chat/messages")),
+           QByteArrayLiteral("GET"));
+  CHECK(recentChat.status == 200);
+  const QJsonArray recentMessages =
+      Data(recentChat).value(QStringLiteral("messages")).toArray();
+  CHECK(recentMessages.size() == 3);
+  qint64 previousId = 0;
+  QSet<qint64> recentIds;
+  for (const QJsonValue &value : recentMessages) {
+    const qint64 id = value.toObject().value(QStringLiteral("id")).toInteger();
+    CHECK(id > previousId);
+    CHECK(!recentIds.contains(id));
+    recentIds.insert(id);
+    previousId = id;
+  }
+  const qint64 cursor = recentMessages.at(0)
+                            .toObject()
+                            .value(QStringLiteral("id"))
+                            .toInteger();
+  const HttpResult incremental =
+      Send(Url(server,
+               QStringLiteral("/api/chat/messages?after=%1").arg(cursor)),
+           QByteArrayLiteral("GET"));
+  const QJsonArray incrementalMessages =
+      Data(incremental).value(QStringLiteral("messages")).toArray();
+  CHECK(incrementalMessages.size() == 2);
+  for (const QJsonValue &value : incrementalMessages)
+    CHECK(value.toObject().value(QStringLiteral("id")).toInteger() > cursor);
+  const HttpResult afterZero =
+      Send(Url(server, QStringLiteral("/api/chat/messages?after=0")),
+           QByteArrayLiteral("GET"));
+  CHECK(Data(afterZero).value(QStringLiteral("messages")).toArray().size() == 3);
+  const HttpResult afterUnknown =
+      Send(Url(server, QStringLiteral("/api/chat/messages?after=999999999")),
+           QByteArrayLiteral("GET"));
+  CHECK(Data(afterUnknown)
+            .value(QStringLiteral("messages"))
+            .toArray()
+            .isEmpty());
+  CHECK(Send(Url(server, QStringLiteral("/api/chat/messages?after=invalid")),
+             QByteArrayLiteral("GET"))
+            .status == 400);
+
   const HttpResult activity = Send(Url(server, QStringLiteral("/api/activity")),
                                    QByteArrayLiteral("GET"));
   CHECK(activity.status == 200);
@@ -410,11 +597,99 @@ int main(int argc, char *argv[]) {
   CHECK(!offlinePlayer.value(QStringLiteral("online")).toBool());
   CHECK(offlinePlayer.value(QStringLiteral("totalSessions")).toInt() == 1);
 
-  // Web sessions are persisted as token hashes and remain valid across a normal
-  // website listener restart.
+  // Seed unrelated persistent data so chat reset scope is verified against the
+  // real community and Bloodborne tables.
+  QSqlQuery preserved(verification.Conn());
+  CHECK(preserved.exec(QStringLiteral(
+      "INSERT OR IGNORE INTO bloodborne_player_stats(user_id) VALUES(%1)")
+                           .arg(account->userId)));
+  CHECK(preserved.exec(QStringLiteral(
+      "INSERT INTO bloodborne_blood_message(owner_user_id,owner_chara_id,area_id,"
+      "area_region_id,channel_id,blood_data,blood_data_version,chara_data,"
+      "chara_data_version,prev_blood_mess_id,created_at) "
+      "VALUES(%1,1,10,20,30,'AA==',1,0,1,0,1)")
+                           .arg(account->userId)));
+  CHECK(preserved.exec(QStringLiteral(
+      "INSERT INTO bloodborne_tomb_message(owner_user_id,owner_chara_id,area_id,"
+      "area_region_id,channel_id,tomb_data,tomb_data_version,death_vision_data,"
+      "death_vision_data_version,created_at) "
+      "VALUES(%1,1,10,20,30,'AA==',1,'AA==',1,1)")
+                           .arg(account->userId)));
+  CHECK(preserved.exec(QStringLiteral(
+      "INSERT INTO bloodborne_wandering_ghost(owner_user_id,owner_chara_id,area_id,"
+      "area_region_id,channel_id,matching_level,reject_ignore,wandering_ghost_data,"
+      "wandering_ghost_data_version,created_at,expires_at) "
+      "VALUES(%1,1,10,20,30,100,0,'AA==',1,1,9999999999)")
+                           .arg(account->userId)));
+  const auto tableCount = [&](const QString &table) -> qint64 {
+    QSqlQuery count(verification.Conn());
+    if (!count.exec(QStringLiteral("SELECT COUNT(*) FROM ") + table) ||
+        !count.next())
+      return -1;
+    return count.value(0).toLongLong();
+  };
+  const QStringList preservedTables = {
+      QStringLiteral("account"),
+      QStringLiteral("bloodborne_web_profile"),
+      QStringLiteral("bloodborne_web_session"),
+      QStringLiteral("bloodborne_player_session"),
+      QStringLiteral("bloodborne_player_stats"),
+      QStringLiteral("bloodborne_activity"),
+      QStringLiteral("bloodborne_blood_message"),
+      QStringLiteral("bloodborne_tomb_message"),
+      QStringLiteral("bloodborne_wandering_ghost"),
+  };
+  QHash<QString, qint64> countsBeforeReset;
+  for (const QString &table : preservedTables) {
+    countsBeforeReset.insert(table, tableCount(table));
+    CHECK(countsBeforeReset.value(table) > 0);
+  }
+
+  // A restart before the configured 24-hour interval preserves chat history.
   server.Stop();
+  QSqlQuery resetState(verification.Conn());
+  resetState.prepare(QStringLiteral(
+      "UPDATE bloodborne_web_chat_state SET value=? WHERE key='last_chat_reset'"));
+  resetState.addBindValue(QDateTime::currentSecsSinceEpoch() - 23 * 60 * 60);
+  CHECK(resetState.exec());
+  BloodborneWebsiteServer notDue;
+  CHECK(notDue.Start(&config, dbPath, &shared));
+  const HttpResult chatBeforeReset =
+      Send(Url(notDue, QStringLiteral("/api/chat/messages")),
+           QByteArrayLiteral("GET"));
+  CHECK(!Data(chatBeforeReset)
+             .value(QStringLiteral("messages"))
+             .toArray()
+             .isEmpty());
+  notDue.Stop();
+
+  // A restart after the interval performs the reset before serving requests.
+  const qint64 resetStartedAt = QDateTime::currentSecsSinceEpoch();
+  resetState.bindValue(0, resetStartedAt - 25 * 60 * 60);
+  CHECK(resetState.exec());
   BloodborneWebsiteServer restarted;
   CHECK(restarted.Start(&config, dbPath, &shared));
+  const HttpResult chatAfterReset =
+      Send(Url(restarted, QStringLiteral("/api/chat/messages")),
+           QByteArrayLiteral("GET"));
+  CHECK(Data(chatAfterReset)
+            .value(QStringLiteral("messages"))
+            .toArray()
+            .isEmpty());
+  CHECK(tableCount(QStringLiteral("bloodborne_web_chat_message")) == 0);
+  for (const QString &table : preservedTables)
+    CHECK(tableCount(table) == countsBeforeReset.value(table));
+  CHECK(QFileInfo::exists(QDir(temporary.filePath(
+                                  QStringLiteral("data/bloodborne-website/avatars")))
+                              .filePath(QFileInfo(avatarUrl).fileName())));
+  QSqlQuery currentReset(verification.Conn());
+  CHECK(currentReset.exec(QStringLiteral(
+      "SELECT value FROM bloodborne_web_chat_state WHERE key='last_chat_reset'")));
+  CHECK(currentReset.next());
+  CHECK(currentReset.value(0).toLongLong() >= resetStartedAt);
+
+  // Web sessions are persisted as token hashes and remain valid across normal
+  // website listener restarts and a chat-only reset.
   const HttpResult persisted =
       Send(Url(restarted, QStringLiteral("/api/account")),
            QByteArrayLiteral("GET"), {}, {}, login.cookie);
@@ -436,7 +711,7 @@ int main(int argc, char *argv[]) {
 
   QSqlQuery migrations(verification.Conn());
   CHECK(migrations.exec(
-      QStringLiteral("SELECT COUNT(*) FROM migration WHERE migration_id=5")));
+      QStringLiteral("SELECT COUNT(*) FROM migration WHERE migration_id=6")));
   CHECK(migrations.next());
   CHECK(migrations.value(0).toInt() == 1);
 
