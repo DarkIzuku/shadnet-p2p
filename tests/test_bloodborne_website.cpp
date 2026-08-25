@@ -608,7 +608,7 @@ int main(int argc, char *argv[]) {
                   QByteArrayLiteral("no-store")));
   CHECK(Send(Url(embeddedOnlyServer, QStringLiteral("/assets/site.css")),
              QByteArrayLiteral("GET"))
-            .body.contains("--bg:"));
+            .body.contains("--background:"));
   embeddedOnlyServer.Stop();
   return 0;
 }
