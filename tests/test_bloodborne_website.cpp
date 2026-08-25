@@ -520,7 +520,7 @@ int main(int argc, char *argv[]) {
       "INSERT INTO bloodborne_web_chat_message(account_id,message,created_at) "
       "VALUES(?,?,?)"));
   for (int index = 0; index < 4; ++index) {
-    injectChat.bindValue(0, account->userId);
+    injectChat.bindValue(0, static_cast<qlonglong>(account->userId));
     injectChat.bindValue(1, QStringLiteral("history-%1").arg(index));
     injectChat.bindValue(2, QDateTime::currentSecsSinceEpoch() + index);
     CHECK(injectChat.exec());
