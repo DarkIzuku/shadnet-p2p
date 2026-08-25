@@ -465,14 +465,12 @@ private:
                       [this](const QHttpServerRequest& request) { return ApiAccount(request); });
         m_http->route(QStringLiteral("/api/account/avatar"), QHttpServerRequest::Method::Post,
                       [this](const QHttpServerRequest& request) { return ApiAvatar(request); });
-        m_http->route(QStringLiteral("/api/chat/messages"), QHttpServerRequest::Method::Get,
-                      [this](const QHttpServerRequest& request) {
-                          return ApiChatMessages(request);
-                      });
-        m_http->route(QStringLiteral("/api/chat/messages"), QHttpServerRequest::Method::Post,
-                      [this](const QHttpServerRequest& request) {
-                          return ApiChatMessageCreate(request);
-                      });
+        m_http->route(
+            QStringLiteral("/api/chat/messages"), QHttpServerRequest::Method::Get,
+            [this](const QHttpServerRequest& request) { return ApiChatMessages(request); });
+        m_http->route(
+            QStringLiteral("/api/chat/messages"), QHttpServerRequest::Method::Post,
+            [this](const QHttpServerRequest& request) { return ApiChatMessageCreate(request); });
 
         m_http->setMissingHandler(m_owner, [this](const QHttpServerRequest& request,
                                                   QHttpServerResponder& responder) {
@@ -743,8 +741,7 @@ private:
         data.insert(QStringLiteral("historyLimit"), limit);
         data.insert(QStringLiteral("maxMessageLength"),
                     m_config->GetBloodborneWebsiteChatMaxMessageLength());
-        data.insert(QStringLiteral("resetHours"),
-                    m_config->GetBloodborneWebsiteChatResetHours());
+        data.insert(QStringLiteral("resetHours"), m_config->GetBloodborneWebsiteChatResetHours());
         return JsonData(data);
     }
 
@@ -778,9 +775,9 @@ private:
                              QStringLiteral("Please wait before sending another message"));
 
         QSqlQuery insert(m_db->Conn());
-        insert.prepare(QStringLiteral(
-            "INSERT INTO bloodborne_web_chat_message(account_id,message,created_at) "
-            "VALUES(?,?,?)"));
+        insert.prepare(
+            QStringLiteral("INSERT INTO bloodborne_web_chat_message(account_id,message,created_at) "
+                           "VALUES(?,?,?)"));
         insert.addBindValue(session->userId);
         insert.addBindValue(message);
         insert.addBindValue(QDateTime::currentSecsSinceEpoch());
