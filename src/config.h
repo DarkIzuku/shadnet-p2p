@@ -122,6 +122,14 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneWebsiteRegistrationEnabled;
     }
+    bool IsBloodborneWebsiteExternalAssetsEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteExternalAssetsEnabled;
+    }
+    QString GetBloodborneWebsiteExternalAssetsPath() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteExternalAssetsPath;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -194,6 +202,8 @@ private:
     bool m_bloodborneWebsiteEnabled = true;
     QString m_bloodborneWebsitePort = "31316";
     bool m_bloodborneWebsiteRegistrationEnabled = true;
+    bool m_bloodborneWebsiteExternalAssetsEnabled = true;
+    QString m_bloodborneWebsiteExternalAssetsPath = "web";
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

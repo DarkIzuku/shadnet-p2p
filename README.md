@@ -176,6 +176,8 @@ ServerLogFlushImmediately=true
 BloodborneWebsiteEnabled=true
 BloodborneWebsitePort=31316
 BloodborneWebsiteRegistrationEnabled=true
+BloodborneWebsiteExternalAssetsEnabled=true
+BloodborneWebsiteExternalAssetsPath=web
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

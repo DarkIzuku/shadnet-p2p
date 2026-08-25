@@ -234,8 +234,18 @@ add_custom_command(TARGET shadnet POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/scoreboards.cfg"
         "$<TARGET_FILE_DIR:shadnet>/scoreboards.cfg"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:shadnet>/web"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/index.html"
+        "$<TARGET_FILE_DIR:shadnet>/web/index.html"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/assets"
+        "$<TARGET_FILE_DIR:shadnet>/web/assets"
 )
 
 
 install(TARGETS shadnet RUNTIME DESTINATION bin)
 install(FILES worlds.cfg scoreboards.cfg DESTINATION bin)
+install(FILES web/index.html DESTINATION bin/web)
+install(DIRECTORY web/assets DESTINATION bin/web)

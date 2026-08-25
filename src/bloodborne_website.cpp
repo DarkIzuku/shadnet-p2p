@@ -60,7 +60,8 @@ QByteArray HeaderValue(const QHttpServerRequest& request, const QByteArray& want
     return request.value(wanted);
 }
 
-QHttpServerResponse Harden(QHttpServerResponse response, bool noStore = true) {
+QHttpServerResponse Harden(QHttpServerResponse response, bool noStore = true,
+                           const QByteArray& cacheControl = {}) {
     QHttpHeaders headers = response.headers();
     headers.append(QByteArrayLiteral("X-Content-Type-Options"), QByteArrayLiteral("nosniff"));
     headers.append(QByteArrayLiteral("X-Frame-Options"), QByteArrayLiteral("DENY"));
@@ -73,8 +74,9 @@ QHttpServerResponse Harden(QHttpServerResponse response, bool noStore = true) {
                           "frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; "
                           "style-src 'self'; script-src 'self'; connect-src 'self'"));
     headers.append(QByteArrayLiteral("Cache-Control"),
-                   noStore ? QByteArrayLiteral("no-store")
-                           : QByteArrayLiteral("public, max-age=86400"));
+                   cacheControl.isEmpty() ? (noStore ? QByteArrayLiteral("no-store")
+                                                     : QByteArrayLiteral("public, max-age=86400"))
+                                          : cacheControl);
     response.setHeaders(std::move(headers));
     return response;
 }
@@ -190,6 +192,44 @@ QByteArray ReadResource(const QString& path) {
     return file.readAll();
 }
 
+QByteArray StaticContentType(const QString& path) {
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QStringLiteral("html"))
+        return QByteArrayLiteral("text/html; charset=utf-8");
+    if (suffix == QStringLiteral("css"))
+        return QByteArrayLiteral("text/css; charset=utf-8");
+    if (suffix == QStringLiteral("js"))
+        return QByteArrayLiteral("application/javascript; charset=utf-8");
+    if (suffix == QStringLiteral("json"))
+        return QByteArrayLiteral("application/json; charset=utf-8");
+    if (suffix == QStringLiteral("png"))
+        return QByteArrayLiteral("image/png");
+    if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg"))
+        return QByteArrayLiteral("image/jpeg");
+    if (suffix == QStringLiteral("webp"))
+        return QByteArrayLiteral("image/webp");
+    if (suffix == QStringLiteral("svg"))
+        return QByteArrayLiteral("image/svg+xml");
+    if (suffix == QStringLiteral("ico"))
+        return QByteArrayLiteral("image/x-icon");
+    if (suffix == QStringLiteral("woff"))
+        return QByteArrayLiteral("font/woff");
+    if (suffix == QStringLiteral("woff2"))
+        return QByteArrayLiteral("font/woff2");
+    return QByteArrayLiteral("application/octet-stream");
+}
+
+bool PathIsInside(const QString& rootPath, const QString& candidatePath) {
+    const QString root = QDir::cleanPath(QDir::fromNativeSeparators(rootPath));
+    const QString candidate = QDir::cleanPath(QDir::fromNativeSeparators(candidatePath));
+#ifdef Q_OS_WIN
+    constexpr Qt::CaseSensitivity sensitivity = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity sensitivity = Qt::CaseSensitive;
+#endif
+    return candidate.startsWith(root + QLatin1Char('/'), sensitivity);
+}
+
 QString EscapeLike(QString text) {
     text.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
     text.replace(QStringLiteral("%"), QStringLiteral("\\%"));
@@ -256,6 +296,7 @@ public:
         }
         CloseInterruptedPlayerSessions();
         PurgeExpiredWebSessions();
+        ConfigureFrontendAssets();
 
         m_http = std::make_unique<QHttpServer>(m_owner);
         RegisterRoutes();
@@ -368,25 +409,21 @@ private:
                       [this](const QString&, const QHttpServerRequest&) { return StaticShell(); });
 
         m_http->route(QStringLiteral("/assets/site.css"), QHttpServerRequest::Method::Get,
-                      [](const QHttpServerRequest&) {
-                          return StaticResource(QStringLiteral(":/website/site.css"),
-                                                QByteArrayLiteral("text/css; charset=utf-8"));
+                      [this](const QHttpServerRequest&) {
+                          return StaticAsset(QStringLiteral("/assets/site.css"));
                       });
         m_http->route(QStringLiteral("/assets/site.js"), QHttpServerRequest::Method::Get,
-                      [](const QHttpServerRequest&) {
-                          return StaticResource(QStringLiteral(":/website/site.js"),
-                                                QByteArrayLiteral("application/javascript; "
-                                                                  "charset=utf-8"));
+                      [this](const QHttpServerRequest&) {
+                          return StaticAsset(QStringLiteral("/assets/site.js"));
                       });
         m_http->route(QStringLiteral("/assets/requiem-hero.jpg"), QHttpServerRequest::Method::Get,
-                      [](const QHttpServerRequest&) {
-                          return StaticResource(QStringLiteral(":/website/requiem-hero.jpg"),
-                                                QByteArrayLiteral("image/jpeg"));
+                      [this](const QHttpServerRequest&) {
+                          return StaticAsset(
+                              QStringLiteral("/assets/backgrounds/requiem-hero.jpg"));
                       });
         m_http->route(QStringLiteral("/assets/requiem-emblem.png"), QHttpServerRequest::Method::Get,
-                      [](const QHttpServerRequest&) {
-                          return StaticResource(QStringLiteral(":/website/requiem-emblem.png"),
-                                                QByteArrayLiteral("image/png"));
+                      [this](const QHttpServerRequest&) {
+                          return StaticAsset(QStringLiteral("/assets/requiem-emblem.png"));
                       });
         m_http->route(QStringLiteral("/avatars/<arg>"), QHttpServerRequest::Method::Get,
                       [this](const QString& fileName, const QHttpServerRequest&) {
@@ -414,19 +451,99 @@ private:
         m_http->route(QStringLiteral("/api/account/avatar"), QHttpServerRequest::Method::Post,
                       [this](const QHttpServerRequest& request) { return ApiAvatar(request); });
 
-        m_http->setMissingHandler(
-            m_owner, [](const QHttpServerRequest& request, QHttpServerResponder& responder) {
-                if (request.url().path().startsWith(QStringLiteral("/api/"))) {
-                    responder.sendResponse(JsonError(Status(404), QStringLiteral("not_found"),
-                                                     QStringLiteral("Endpoint not found")));
-                } else {
-                    responder.sendResponse(JsonError(Status(404), QStringLiteral("not_found"),
-                                                     QStringLiteral("Page not found")));
+        m_http->setMissingHandler(m_owner, [this](const QHttpServerRequest& request,
+                                                  QHttpServerResponder& responder) {
+            if (request.method() == QHttpServerRequest::Method::Get &&
+                !request.url().path().startsWith(QStringLiteral("/api/")) &&
+                !request.url().path().startsWith(QStringLiteral("/avatars/"))) {
+                const auto external = TryExternalResource(request.url().path(QUrl::FullyDecoded));
+                if (external.has_value()) {
+                    responder.sendResponse(std::move(*external));
+                    return;
                 }
-            });
+            }
+            if (request.url().path().startsWith(QStringLiteral("/api/"))) {
+                responder.sendResponse(JsonError(Status(404), QStringLiteral("not_found"),
+                                                 QStringLiteral("Endpoint not found")));
+            } else {
+                responder.sendResponse(JsonError(Status(404), QStringLiteral("not_found"),
+                                                 QStringLiteral("Page not found")));
+            }
+        });
     }
 
-    static QHttpServerResponse StaticResource(const QString& path, const QByteArray& contentType) {
+    void ConfigureFrontendAssets() {
+        m_externalAssetsActive = false;
+        m_externalAssetsRoot.clear();
+        if (m_config->IsBloodborneWebsiteExternalAssetsEnabled()) {
+            const QString configured = m_config->GetBloodborneWebsiteExternalAssetsPath();
+            if (!configured.isEmpty()) {
+                const QString candidate =
+                    QDir::isAbsolutePath(configured)
+                        ? QDir::cleanPath(configured)
+                        : QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
+                const QFileInfo rootInfo(candidate);
+                const QString canonicalRoot = rootInfo.canonicalFilePath();
+                const QFileInfo indexInfo(
+                    QDir(canonicalRoot).filePath(QStringLiteral("index.html")));
+                const QString canonicalIndex = indexInfo.canonicalFilePath();
+                if (rootInfo.isDir() && !canonicalRoot.isEmpty() && indexInfo.isFile() &&
+                    !canonicalIndex.isEmpty() && PathIsInside(canonicalRoot, canonicalIndex)) {
+                    m_externalAssetsRoot =
+                        QDir::cleanPath(QDir::fromNativeSeparators(canonicalRoot));
+                    m_externalAssetsActive = true;
+                }
+            }
+        }
+
+        if (m_externalAssetsActive) {
+            qInfo().nospace().noquote()
+                << "Bloodborne website assets: external path=" << m_externalAssetsRoot;
+        } else {
+            qInfo().noquote() << "Bloodborne website assets: embedded Qt resources";
+        }
+    }
+
+    std::optional<QString> ResolveExternalFile(QString requestPath) const {
+        if (!m_externalAssetsActive || requestPath.isEmpty() || requestPath.contains(QChar::Null))
+            return std::nullopt;
+        requestPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
+        while (requestPath.startsWith(QLatin1Char('/')))
+            requestPath.remove(0, 1);
+        if (requestPath.isEmpty() || QDir::isAbsolutePath(requestPath))
+            return std::nullopt;
+
+        const QStringList parts = requestPath.split(QLatin1Char('/'), Qt::KeepEmptyParts);
+        for (const QString& part : parts) {
+            if (part.isEmpty() || part == QStringLiteral(".") || part == QStringLiteral(".."))
+                return std::nullopt;
+        }
+
+        const QString clean = QDir::cleanPath(requestPath);
+        if (clean == QStringLiteral(".") || clean.startsWith(QStringLiteral("../")))
+            return std::nullopt;
+        const QFileInfo fileInfo(QDir(m_externalAssetsRoot).filePath(clean));
+        if (!fileInfo.isFile())
+            return std::nullopt;
+        const QString canonicalFile = fileInfo.canonicalFilePath();
+        if (canonicalFile.isEmpty() || !PathIsInside(m_externalAssetsRoot, canonicalFile))
+            return std::nullopt;
+        return canonicalFile;
+    }
+
+    std::optional<QHttpServerResponse> TryExternalResource(const QString& requestPath) const {
+        const auto path = ResolveExternalFile(requestPath);
+        if (!path.has_value())
+            return std::nullopt;
+        QFile file(*path);
+        if (!file.open(QIODevice::ReadOnly))
+            return std::nullopt;
+        return Harden(QHttpServerResponse{StaticContentType(*path), file.readAll(), Status(200)},
+                      false, QByteArrayLiteral("no-cache"));
+    }
+
+    static QHttpServerResponse EmbeddedResource(const QString& path,
+                                                const QByteArray& contentType) {
         const QByteArray bytes = ReadResource(path);
         if (bytes.isEmpty())
             return JsonError(Status(404), QStringLiteral("asset_not_found"),
@@ -434,7 +551,38 @@ private:
         return Harden(QHttpServerResponse{contentType, bytes, Status(200)}, false);
     }
 
+    QHttpServerResponse StaticAsset(const QString& requestPath) const {
+        if (m_externalAssetsActive) {
+            const auto external = TryExternalResource(requestPath);
+            if (external.has_value())
+                return std::move(*external);
+            return JsonError(Status(404), QStringLiteral("asset_not_found"),
+                             QStringLiteral("Asset not found"));
+        }
+        if (requestPath == QStringLiteral("/assets/site.css"))
+            return EmbeddedResource(QStringLiteral(":/website/site.css"),
+                                    StaticContentType(requestPath));
+        if (requestPath == QStringLiteral("/assets/site.js"))
+            return EmbeddedResource(QStringLiteral(":/website/site.js"),
+                                    StaticContentType(requestPath));
+        if (requestPath == QStringLiteral("/assets/backgrounds/requiem-hero.jpg"))
+            return EmbeddedResource(QStringLiteral(":/website/requiem-hero.jpg"),
+                                    StaticContentType(requestPath));
+        if (requestPath == QStringLiteral("/assets/requiem-emblem.png"))
+            return EmbeddedResource(QStringLiteral(":/website/requiem-emblem.png"),
+                                    StaticContentType(requestPath));
+        return JsonError(Status(404), QStringLiteral("asset_not_found"),
+                         QStringLiteral("Asset not found"));
+    }
+
     QHttpServerResponse StaticShell() const {
+        if (m_externalAssetsActive) {
+            const auto external = TryExternalResource(QStringLiteral("/index.html"));
+            if (external.has_value())
+                return std::move(*external);
+            return JsonError(Status(404), QStringLiteral("website_unavailable"),
+                             QStringLiteral("Website unavailable"));
+        }
         const QByteArray bytes = ReadResource(QStringLiteral(":/website/index.html"));
         if (bytes.isEmpty())
             return JsonError(Status(500), QStringLiteral("website_unavailable"),
@@ -1041,6 +1189,8 @@ private:
     std::unique_ptr<QTcpServer> m_tcp;
     QString m_dataRoot;
     QString m_avatarDirectory;
+    QString m_externalAssetsRoot;
+    bool m_externalAssetsActive = false;
     QMutex m_rateMutex;
     QHash<QString, QList<qint64>> m_rateEvents;
 };

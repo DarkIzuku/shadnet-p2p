@@ -269,6 +269,9 @@ int main(int argc, char *argv[]) {
   CHECK(defaultConfig.IsBloodborneWebsiteEnabled());
   CHECK(defaultConfig.GetBloodborneWebsitePort() == QStringLiteral("31316"));
   CHECK(defaultConfig.IsBloodborneWebsiteRegistrationEnabled());
+  CHECK(defaultConfig.IsBloodborneWebsiteExternalAssetsEnabled());
+  CHECK(defaultConfig.GetBloodborneWebsiteExternalAssetsPath() ==
+        QStringLiteral("web"));
 
   const QString configuredPath =
       directory.filePath(QStringLiteral("configured-shadnet.cfg"));
@@ -292,6 +295,10 @@ int main(int argc, char *argv[]) {
                       QStringLiteral("32316"));
     settings.setValue(QStringLiteral("BloodborneWebsiteRegistrationEnabled"),
                       false);
+    settings.setValue(QStringLiteral("BloodborneWebsiteExternalAssetsEnabled"),
+                      false);
+    settings.setValue(QStringLiteral("BloodborneWebsiteExternalAssetsPath"),
+                      QStringLiteral("custom-web"));
     settings.sync();
   }
   ConfigManager configured;
@@ -309,6 +316,9 @@ int main(int argc, char *argv[]) {
   CHECK(!configured.IsBloodborneWebsiteEnabled());
   CHECK(configured.GetBloodborneWebsitePort() == QStringLiteral("32316"));
   CHECK(!configured.IsBloodborneWebsiteRegistrationEnabled());
+  CHECK(!configured.IsBloodborneWebsiteExternalAssetsEnabled());
+  CHECK(configured.GetBloodborneWebsiteExternalAssetsPath() ==
+        QStringLiteral("custom-web"));
 
   Database db(QStringLiteral("bloodborne_bootstrap_test"));
   CHECK(db.Open(directory.filePath(QStringLiteral("test.db"))));

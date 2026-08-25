@@ -15,6 +15,8 @@ Add these values beneath `[General]` in the `shadnet.cfg` beside the executable:
 BloodborneWebsiteEnabled=true
 BloodborneWebsitePort=31316
 BloodborneWebsiteRegistrationEnabled=true
+BloodborneWebsiteExternalAssetsEnabled=true
+BloodborneWebsiteExternalAssetsPath=web
 ```
 
 Open `http://SERVER_ADDRESS:31316/`. `BloodborneWebsiteEnabled=false` leaves the listener closed
@@ -25,6 +27,33 @@ The game WebAPI remains on `31315`. Do not assign both listeners the same port. 
 over a LAN, Radmin, or Tailscale address. Plain HTTP is supported for private networks; an optional
 HTTPS reverse proxy can be placed in front later. Web cookies automatically gain `Secure` when the
 request arrives with `X-Forwarded-Proto: https`.
+
+## Editable frontend assets
+
+Release artifacts include an editable `web/` folder beside the executable. With the default
+settings above, a valid `web/index.html` makes the website serve that folder instead of its
+embedded Qt resources. The path is resolved relative to the executable directory, not the shell's
+current working directory; an absolute path is also accepted. Edit `index.html`, `assets/site.css`,
+`assets/site.js`, or another file below `web/`, save it, and refresh the browser. External files are
+read on every request with `Cache-Control: no-cache`, so recompilation and a server restart are not
+required.
+
+If the folder or `index.html` is absent, the embedded website starts normally. Set
+`BloodborneWebsiteExternalAssetsEnabled=false` to force that fallback even when the folder exists.
+The server rejects decoded `..` path components, directory requests, missing files, and symlinks
+whose canonical destination is outside the configured frontend root. It never lists directories.
+
+Expected startup messages are:
+
+```text
+Bloodborne website assets: external path=D:/path/to/shadnet/web
+```
+
+or:
+
+```text
+Bloodborne website assets: embedded Qt resources
+```
 
 ## Accounts and registration
 

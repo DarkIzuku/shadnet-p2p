@@ -167,6 +167,7 @@ jobs:
         Copy-Item ${{ github.workspace }}/build/shadnet.exe staging/
         Copy-Item ${{ github.workspace }}/build/worlds.cfg staging/
         Copy-Item ${{ github.workspace }}/build/scoreboards.cfg staging/
+        Copy-Item -Recurse ${{ github.workspace }}/build/web staging/web
         # Copies Qt6 DLLs, sqldrivers/qsqlite.dll, and VC runtime alongside the exe
         windeployqt6 --release --no-translations staging/shadnet.exe
 
@@ -244,9 +245,11 @@ jobs:
         ctest --test-dir ${{ github.workspace }}/build --output-on-failure
 
     - name: Package
-      run: >
-        tar czf shadnet-linux64.tar.gz -C ${{ github.workspace }}/build
-        shadnet worlds.cfg scoreboards.cfg
+      run: |
+        mkdir -p staging
+        cp build/shadnet build/worlds.cfg build/scoreboards.cfg staging/
+        cp -a build/web staging/web
+        tar czf shadnet-linux64.tar.gz -C staging .
 
     - name: Upload Linux artifact
       uses: actions/upload-artifact@v4

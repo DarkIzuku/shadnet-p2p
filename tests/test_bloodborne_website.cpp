@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFile>
+#include <QHostAddress>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -16,8 +17,10 @@
 #include <QNetworkRequest>
 #include <QSettings>
 #include <QSqlQuery>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QUuid>
 
 #include "bloodborne_website.h"
 #include "client_session.h"
@@ -87,6 +90,38 @@ HttpResult Send(const QUrl &url, const QByteArray &method,
   return result;
 }
 
+HttpResult SendRaw(quint16 port, const QByteArray &target) {
+  QTcpSocket socket;
+  QByteArray received;
+  QEventLoop loop;
+  QTimer timeout;
+  timeout.setSingleShot(true);
+  QObject::connect(&socket, &QTcpSocket::connected, &socket, [&] {
+    socket.write(QByteArrayLiteral("GET ") + target +
+                 QByteArrayLiteral(" HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                                   "Connection: close\r\n\r\n"));
+  });
+  QObject::connect(&socket, &QTcpSocket::readyRead, &socket,
+                   [&] { received += socket.readAll(); });
+  QObject::connect(&socket, &QTcpSocket::disconnected, &loop,
+                   &QEventLoop::quit);
+  QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+  socket.connectToHost(QHostAddress::LocalHost, port);
+  timeout.start(5000);
+  loop.exec();
+  received += socket.readAll();
+
+  HttpResult result;
+  result.finished = socket.state() == QAbstractSocket::UnconnectedState;
+  const qsizetype firstSpace = received.indexOf(' ');
+  if (firstSpace >= 0)
+    result.status = received.mid(firstSpace + 1, 3).toInt();
+  const qsizetype bodyOffset = received.indexOf(QByteArrayLiteral("\r\n\r\n"));
+  if (bodyOffset >= 0)
+    result.body = received.mid(bodyOffset + 4);
+  return result;
+}
+
 QJsonObject Root(const HttpResult &result) {
   return QJsonDocument::fromJson(result.body).object();
 }
@@ -113,7 +148,10 @@ HttpResult Json(const BloodborneWebsiteServer &server, const QString &path,
               QByteArrayLiteral("application/json"), cookie, csrf);
 }
 
-void WriteConfig(const QString &path, bool enabled, bool registrationEnabled) {
+void WriteConfig(const QString &path, bool enabled, bool registrationEnabled,
+                 bool externalAssetsEnabled = true,
+                 const QString &externalAssetsPath =
+                     QStringLiteral("website-assets-missing-for-tests")) {
   QSettings settings(path, QSettings::IniFormat);
   settings.setValue(QStringLiteral("Host"), QStringLiteral("127.0.0.1"));
   settings.setValue(QStringLiteral("WebApiPort"), QStringLiteral("31315"));
@@ -122,7 +160,20 @@ void WriteConfig(const QString &path, bool enabled, bool registrationEnabled) {
                     QStringLiteral("0"));
   settings.setValue(QStringLiteral("BloodborneWebsiteRegistrationEnabled"),
                     registrationEnabled);
+  settings.setValue(QStringLiteral("BloodborneWebsiteExternalAssetsEnabled"),
+                    externalAssetsEnabled);
+  settings.setValue(QStringLiteral("BloodborneWebsiteExternalAssetsPath"),
+                    externalAssetsPath);
   settings.sync();
+}
+
+bool WriteFile(const QString &path, const QByteArray &contents) {
+  if (!QDir().mkpath(QFileInfo(path).absolutePath()))
+    return false;
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    return false;
+  return file.write(contents) == contents.size();
 }
 
 QByteArray PngImage() {
@@ -381,11 +432,183 @@ int main(int argc, char *argv[]) {
       Send(Url(restarted, QStringLiteral("/api/account")),
            QByteArrayLiteral("GET"), {}, {}, login.cookie);
   CHECK(loggedOut.status == 401);
+  restarted.Stop();
 
   QSqlQuery migrations(verification.Conn());
   CHECK(migrations.exec(
       QStringLiteral("SELECT COUNT(*) FROM migration WHERE migration_id=5")));
   CHECK(migrations.next());
   CHECK(migrations.value(0).toInt() == 1);
+
+  const QString applicationDirectory = QCoreApplication::applicationDirPath();
+  QTemporaryDir externalDirectory(
+      QDir(applicationDirectory)
+          .filePath(QStringLiteral("website-external-assets-test-XXXXXX")));
+  CHECK(externalDirectory.isValid());
+  const QString externalRoot = externalDirectory.path();
+  const QString relativeExternalRoot =
+      QDir(applicationDirectory).relativeFilePath(externalRoot);
+  CHECK(!QDir::isAbsolutePath(relativeExternalRoot));
+
+  const QByteArray externalIndex = QByteArrayLiteral(
+      "<!doctype html><html><body>external-index-v1</body></html>");
+  const QByteArray externalCss =
+      QByteArrayLiteral("body{color:#ddd}/* external-css-v1 */");
+  const QByteArray externalJs =
+      QByteArrayLiteral("window.externalAssetVersion='v1';");
+  const QByteArray externalImage =
+      QByteArray::fromHex("ffd8ff0045585445524e414c00ffd9");
+  CHECK(WriteFile(QDir(externalRoot).filePath(QStringLiteral("index.html")),
+                  externalIndex));
+  CHECK(
+      WriteFile(QDir(externalRoot).filePath(QStringLiteral("assets/site.css")),
+                externalCss));
+  CHECK(WriteFile(QDir(externalRoot).filePath(QStringLiteral("assets/site.js")),
+                  externalJs));
+  CHECK(WriteFile(
+      QDir(externalRoot)
+          .filePath(QStringLiteral("assets/backgrounds/requiem-hero.jpg")),
+      externalImage));
+  CHECK(WriteFile(
+      QDir(externalRoot).filePath(QStringLiteral("assets/requiem-emblem.png")),
+      QByteArray::fromHex("89504e470d0a1a0a00010203")));
+
+  const QList<QPair<QString, QByteArray>> mimeCases = {
+      {QStringLiteral("sample.html"),
+       QByteArrayLiteral("text/html; charset=utf-8")},
+      {QStringLiteral("sample.css"),
+       QByteArrayLiteral("text/css; charset=utf-8")},
+      {QStringLiteral("sample.js"),
+       QByteArrayLiteral("application/javascript; charset=utf-8")},
+      {QStringLiteral("sample.json"),
+       QByteArrayLiteral("application/json; charset=utf-8")},
+      {QStringLiteral("sample.png"), QByteArrayLiteral("image/png")},
+      {QStringLiteral("sample.jpg"), QByteArrayLiteral("image/jpeg")},
+      {QStringLiteral("sample.jpeg"), QByteArrayLiteral("image/jpeg")},
+      {QStringLiteral("sample.webp"), QByteArrayLiteral("image/webp")},
+      {QStringLiteral("sample.svg"), QByteArrayLiteral("image/svg+xml")},
+      {QStringLiteral("sample.ico"), QByteArrayLiteral("image/x-icon")},
+      {QStringLiteral("sample.woff"), QByteArrayLiteral("font/woff")},
+      {QStringLiteral("sample.woff2"), QByteArrayLiteral("font/woff2")},
+      {QStringLiteral("sample.unknown"),
+       QByteArrayLiteral("application/octet-stream")},
+  };
+  for (const auto &[name, unused] : mimeCases) {
+    Q_UNUSED(unused);
+    CHECK(WriteFile(
+        QDir(externalRoot).filePath(QStringLiteral("assets/mime/") + name),
+        QByteArrayLiteral("mime-body")));
+  }
+
+  const QString externalConfigPath =
+      temporary.filePath(QStringLiteral("external-assets.cfg"));
+  WriteConfig(externalConfigPath, true, true, true, relativeExternalRoot);
+  ConfigManager externalConfig;
+  CHECK(externalConfig.Load(externalConfigPath));
+  shared.config = &externalConfig;
+  BloodborneWebsiteServer externalServer;
+  CHECK(externalServer.Start(&externalConfig, dbPath, &shared));
+
+  const HttpResult externalHome =
+      Send(Url(externalServer, QStringLiteral("/")), QByteArrayLiteral("GET"));
+  CHECK(externalHome.status == 200);
+  CHECK(externalHome.body == externalIndex);
+  CHECK(HasHeader(externalHome, QByteArrayLiteral("Content-Type"),
+                  QByteArrayLiteral("text/html; charset=utf-8")));
+  CHECK(HasHeader(externalHome, QByteArrayLiteral("Cache-Control"),
+                  QByteArrayLiteral("no-cache")));
+  CHECK(HasHeader(externalHome, QByteArrayLiteral("X-Content-Type-Options"),
+                  QByteArrayLiteral("nosniff")));
+  CHECK(Send(Url(externalServer, QStringLiteral("/register")),
+             QByteArrayLiteral("GET"))
+            .body == externalIndex);
+
+  const HttpResult externalStyle =
+      Send(Url(externalServer, QStringLiteral("/assets/site.css")),
+           QByteArrayLiteral("GET"));
+  CHECK(externalStyle.status == 200);
+  CHECK(externalStyle.body == externalCss);
+  CHECK(HasHeader(externalStyle, QByteArrayLiteral("Content-Type"),
+                  QByteArrayLiteral("text/css; charset=utf-8")));
+  CHECK(Send(Url(externalServer, QStringLiteral("/assets/site.js")),
+             QByteArrayLiteral("GET"))
+            .body == externalJs);
+  CHECK(Send(Url(externalServer,
+                 QStringLiteral("/assets/backgrounds/requiem-hero.jpg")),
+             QByteArrayLiteral("GET"))
+            .body == externalImage);
+  CHECK(Send(Url(externalServer, QStringLiteral("/assets/requiem-hero.jpg")),
+             QByteArrayLiteral("GET"))
+            .body == externalImage);
+
+  for (const auto &[name, contentType] : mimeCases) {
+    const HttpResult result =
+        Send(Url(externalServer, QStringLiteral("/assets/mime/") + name),
+             QByteArrayLiteral("GET"));
+    CHECK(result.status == 200);
+    CHECK(HasHeader(result, QByteArrayLiteral("Content-Type"), contentType));
+  }
+
+  CHECK(WriteFile(QDir(externalRoot).filePath(QStringLiteral("index.html")),
+                  QByteArrayLiteral("external-index-v2")));
+  CHECK(
+      WriteFile(QDir(externalRoot).filePath(QStringLiteral("assets/site.css")),
+                QByteArrayLiteral("external-css-v2")));
+  CHECK(WriteFile(QDir(externalRoot).filePath(QStringLiteral("assets/site.js")),
+                  QByteArrayLiteral("external-js-v2")));
+  CHECK(Send(Url(externalServer, QStringLiteral("/")), QByteArrayLiteral("GET"))
+            .body == QByteArrayLiteral("external-index-v2"));
+  CHECK(Send(Url(externalServer, QStringLiteral("/assets/site.css")),
+             QByteArrayLiteral("GET"))
+            .body == QByteArrayLiteral("external-css-v2"));
+  CHECK(Send(Url(externalServer, QStringLiteral("/assets/site.js")),
+             QByteArrayLiteral("GET"))
+            .body == QByteArrayLiteral("external-js-v2"));
+
+  CHECK(Send(Url(externalServer, QStringLiteral("/assets/")),
+             QByteArrayLiteral("GET"))
+            .status == 404);
+  CHECK(Send(Url(externalServer, QStringLiteral("/assets/missing.png")),
+             QByteArrayLiteral("GET"))
+            .status == 404);
+
+  const QString outsideName =
+      QStringLiteral("website-outside-%1.txt")
+          .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+  const QString outsidePath = QDir(applicationDirectory).filePath(outsideName);
+  const QByteArray outsideSecret = QByteArrayLiteral("must-not-be-served");
+  CHECK(WriteFile(outsidePath, outsideSecret));
+  const HttpResult plainTraversal =
+      SendRaw(externalServer.ListeningPort(),
+              QByteArrayLiteral("/../") + outsideName.toUtf8());
+  CHECK(plainTraversal.status == 400 || plainTraversal.status == 404);
+  CHECK(!plainTraversal.body.contains(outsideSecret));
+  const HttpResult encodedTraversal =
+      SendRaw(externalServer.ListeningPort(),
+              QByteArrayLiteral("/%2e%2e/") + outsideName.toUtf8());
+  CHECK(encodedTraversal.status == 400 || encodedTraversal.status == 404);
+  CHECK(!encodedTraversal.body.contains(outsideSecret));
+  CHECK(QFile::remove(outsidePath));
+  externalServer.Stop();
+
+  const QString embeddedOnlyConfigPath =
+      temporary.filePath(QStringLiteral("embedded-only.cfg"));
+  WriteConfig(embeddedOnlyConfigPath, true, true, false, relativeExternalRoot);
+  ConfigManager embeddedOnlyConfig;
+  CHECK(embeddedOnlyConfig.Load(embeddedOnlyConfigPath));
+  shared.config = &embeddedOnlyConfig;
+  BloodborneWebsiteServer embeddedOnlyServer;
+  CHECK(embeddedOnlyServer.Start(&embeddedOnlyConfig, dbPath, &shared));
+  const HttpResult embeddedOnlyHome = Send(
+      Url(embeddedOnlyServer, QStringLiteral("/")), QByteArrayLiteral("GET"));
+  CHECK(embeddedOnlyHome.status == 200);
+  CHECK(embeddedOnlyHome.body.contains("The Hunter's Requiem"));
+  CHECK(!embeddedOnlyHome.body.contains("external-index"));
+  CHECK(HasHeader(embeddedOnlyHome, QByteArrayLiteral("Cache-Control"),
+                  QByteArrayLiteral("no-store")));
+  CHECK(Send(Url(embeddedOnlyServer, QStringLiteral("/assets/site.css")),
+             QByteArrayLiteral("GET"))
+            .body.contains("--bg:"));
+  embeddedOnlyServer.Stop();
   return 0;
 }
