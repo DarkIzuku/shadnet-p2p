@@ -3,6 +3,7 @@
 #include "bloodborne_online_service.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
 
@@ -118,6 +119,32 @@ bool ValidArea(const QJsonObject& area) {
            IsInteger(area, "AreaRegionId", -1, 0x7FFFFFFFLL) &&
            IsInteger(area, "ChannelId", 0, 0x7FFFFFFFLL) &&
            IsInteger(area, "GetCount", 0, MaxListItems);
+}
+
+QString ValueSummary(const QJsonValue& value) {
+    if (value.isUndefined())
+        return QStringLiteral("<missing>");
+    if (value.isNull())
+        return QStringLiteral("null");
+    if (value.isBool())
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    if (value.isDouble())
+        return QString::number(value.toDouble(), 'g', 17);
+    if (value.isString())
+        return QStringLiteral("string(length=%1)").arg(value.toString().size());
+    if (value.isArray())
+        return QStringLiteral("array(count=%1)").arg(value.toArray().size());
+    if (value.isObject())
+        return QStringLiteral("object");
+    return QStringLiteral("<unknown>");
+}
+
+OnlineResult InvalidWanderingGhostGet(const QString& field, const QString& expectation,
+                                      const QJsonValue& value) {
+    return Failure(
+        OnlineError::InvalidRequest,
+        QStringLiteral("WanderingGhostGet validation failed: field=%1 expected=%2 value=%3")
+            .arg(field, expectation, ValueSummary(value)));
 }
 
 QJsonObject BloodMessageItem(const QSqlQuery& query) {
@@ -684,23 +711,81 @@ OnlineResult OnlineService::CreateWanderingGhost(qint64 userId, const QJsonObjec
 }
 
 OnlineResult OnlineService::GetWanderingGhosts(qint64 userId, const QJsonObject& request) {
-    if (!IsArray(request, "AreaList") || !IsArray(request, "JoinedCharaIdList") ||
-        !IsInteger(request, "GetMaxCount", 0, MaxListItems) ||
-        !IsInteger(request, "MatchingLevel", -1, 9999) ||
-        !IsInteger(request, "WanderingGhostDataVersion", 0, 1000)) {
-        return Failure(OnlineError::InvalidRequest,
-                       QStringLiteral("invalid WanderingGhostGetRequest"));
+    const QJsonValue areaListValue = request.value(QStringLiteral("AreaList"));
+    if (!areaListValue.isArray()) {
+        return InvalidWanderingGhostGet(QStringLiteral("AreaList"), QStringLiteral("array"),
+                                        areaListValue);
     }
+    if (areaListValue.toArray().size() > MaxListItems) {
+        return InvalidWanderingGhostGet(
+            QStringLiteral("AreaList"),
+            QStringLiteral("array with at most %1 items").arg(MaxListItems), areaListValue);
+    }
+
+    const QJsonValue joinedListValue = request.value(QStringLiteral("JoinedCharaIdList"));
+    if (!joinedListValue.isArray()) {
+        return InvalidWanderingGhostGet(QStringLiteral("JoinedCharaIdList"),
+                                        QStringLiteral("array"), joinedListValue);
+    }
+    if (joinedListValue.toArray().size() > MaxListItems) {
+        return InvalidWanderingGhostGet(
+            QStringLiteral("JoinedCharaIdList"),
+            QStringLiteral("array with at most %1 items").arg(MaxListItems), joinedListValue);
+    }
+
+    if (!IsInteger(request, "GetMaxCount", 0, MaxListItems)) {
+        return InvalidWanderingGhostGet(QStringLiteral("GetMaxCount"),
+                                        QStringLiteral("integer in range 0..%1").arg(MaxListItems),
+                                        request.value(QStringLiteral("GetMaxCount")));
+    }
+    if (!IsInteger(request, "MatchingLevel", -1, 9999)) {
+        return InvalidWanderingGhostGet(QStringLiteral("MatchingLevel"),
+                                        QStringLiteral("integer in range -1..9999"),
+                                        request.value(QStringLiteral("MatchingLevel")));
+    }
+    if (!IsInteger(request, "WanderingGhostDataVersion", 0, 1000)) {
+        return InvalidWanderingGhostGet(QStringLiteral("WanderingGhostDataVersion"),
+                                        QStringLiteral("integer in range 0..1000"),
+                                        request.value(QStringLiteral("WanderingGhostDataVersion")));
+    }
+
     const QJsonArray areas = request.value(QStringLiteral("AreaList")).toArray();
-    for (const QJsonValue& value : areas) {
-        if (!value.isObject() || !ValidArea(value.toObject()))
-            return Failure(OnlineError::InvalidRequest, QStringLiteral("invalid AreaList"));
+    for (qsizetype index = 0; index < areas.size(); ++index) {
+        const QJsonValue value = areas.at(index);
+        const QString prefix = QStringLiteral("AreaList[%1]").arg(index);
+        if (!value.isObject()) {
+            return InvalidWanderingGhostGet(prefix, QStringLiteral("object"), value);
+        }
+        const QJsonObject area = value.toObject();
+        struct AreaField {
+            const char* name;
+            qint64 minimum;
+            qint64 maximum;
+        };
+        static constexpr std::array<AreaField, 4> Fields{{
+            {"AreaId", 0, 0xFFFFFFFFLL},
+            {"AreaRegionId", -1, 0x7FFFFFFFLL},
+            {"ChannelId", 0, 0x7FFFFFFFLL},
+            {"GetCount", 0, MaxListItems},
+        }};
+        for (const AreaField& field : Fields) {
+            if (IsInteger(area, field.name, field.minimum, field.maximum))
+                continue;
+            return InvalidWanderingGhostGet(
+                prefix + QLatin1Char('.') + QLatin1String(field.name),
+                QStringLiteral("integer in range %1..%2").arg(field.minimum).arg(field.maximum),
+                area.value(QLatin1String(field.name)));
+        }
     }
+
     QSet<QString> joinedCharaIds;
-    for (const QJsonValue& value : request.value(QStringLiteral("JoinedCharaIdList")).toArray()) {
-        if (!value.isDouble() || !std::isfinite(value.toDouble()))
-            return Failure(OnlineError::InvalidRequest,
-                           QStringLiteral("invalid JoinedCharaIdList"));
+    const QJsonArray joinedValues = joinedListValue.toArray();
+    for (qsizetype index = 0; index < joinedValues.size(); ++index) {
+        const QJsonValue value = joinedValues.at(index);
+        if (!value.isDouble() || !std::isfinite(value.toDouble())) {
+            return InvalidWanderingGhostGet(QStringLiteral("JoinedCharaIdList[%1]").arg(index),
+                                            QStringLiteral("finite JSON number"), value);
+        }
         joinedCharaIds.insert(NumberKey(value.toDouble()));
     }
     if (!PurgeExpiredGhosts(m_db.Conn()))
