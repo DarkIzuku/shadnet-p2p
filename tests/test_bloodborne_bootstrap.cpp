@@ -22,6 +22,7 @@
 
 #include "bloodborne_bootstrap.h"
 #include "bloodborne_ssinfo_reference.h"
+#include "bloodborne_test_fixtures.h"
 #include "client_session.h"
 #include "config.h"
 #include "database.h"
@@ -452,15 +453,41 @@ int main(int argc, char *argv[]) {
         checkTime);
 
   QJsonObject ghost =
-      SessionRequest(QStringLiteral("WanderingGhostGetRequest"), 1, sessionId);
-  ghost.insert(QStringLiteral("AreaList"), QJsonArray{});
-  ghost.insert(QStringLiteral("GetMaxCount"), 10);
-  ghost.insert(QStringLiteral("JoinedCharaIdList"), QJsonArray{});
-  ghost.insert(QStringLiteral("MatchingLevel"), 40);
-  ghost.insert(QStringLiteral("WanderingGhostDataVersion"), 2);
-  CHECK(IsSuccessful(Post(tcp, QStringLiteral("/wandering_ghost/get"), ghost),
-                     QStringLiteral("WanderingGhostGetResponse"),
-                     {"WanderingGhostList"}));
+      BloodborneTestFixtures::OfficialWanderingGhostGetRequest();
+  CHECK(!ghost.isEmpty());
+  ghost.insert(QStringLiteral("UserId"), 1);
+  ghost.insert(QStringLiteral("SessionId"), sessionId);
+  CHECK(IsSuccessful(
+      Post(tcp, QStringLiteral("/wandering_ghost/get?user_id=1"), ghost),
+      QStringLiteral("WanderingGhostGetResponse"), {"WanderingGhostList"}));
+
+  QJsonObject invalidGhostEnvelope = ghost;
+  invalidGhostEnvelope.remove(QStringLiteral("MessageId"));
+  const HttpResult invalidGhostEnvelopeResult =
+      Post(tcp, QStringLiteral("/wandering_ghost/get?user_id=1"),
+           invalidGhostEnvelope);
+  CHECK(invalidGhostEnvelopeResult.status == 400);
+  CHECK(Object(invalidGhostEnvelopeResult)
+            .value(QStringLiteral("Error"))
+            .toString()
+            .contains(QStringLiteral("field=envelope.MessageId")));
+
+  QJsonObject invalidGhostArea = ghost;
+  QJsonObject area = invalidGhostArea.value(QStringLiteral("AreaList"))
+                         .toArray()
+                         .at(0)
+                         .toObject();
+  area.remove(QStringLiteral("ChannelId"));
+  invalidGhostArea.insert(QStringLiteral("AreaList"), QJsonArray{area});
+  const HttpResult invalidGhostAreaResult = Post(
+      tcp, QStringLiteral("/wandering_ghost/get?user_id=1"), invalidGhostArea);
+  CHECK(invalidGhostAreaResult.status == 400);
+  CHECK(Object(invalidGhostAreaResult)
+            .value(QStringLiteral("Error"))
+            .toString() ==
+        QStringLiteral("WanderingGhostGet validation failed: "
+                       "field=AreaList[0].ChannelId expected=integer in range "
+                       "0..2147483647 value=<missing>"));
 
   QJsonObject chair =
       SessionRequest(QStringLiteral("ChairMessGetListRequest"), 1, sessionId);
@@ -469,6 +496,22 @@ int main(int argc, char *argv[]) {
   CHECK(IsSuccessful(Post(tcp, QStringLiteral("/chair_messenger/get"), chair),
                      QStringLiteral("ChairMessGetListResponse"),
                      {"ChairMessList"}));
+
+  const QByteArray chairUpdateBody =
+      QByteArrayLiteral("{\"ChannelId\":0,\"CharaId\":9223372036854776000,"
+                        "\"MessageId\":\"ChairMessRespawnPointNoticeRequest\","
+                        "\"SessionId\":\"") +
+      sessionId.toUtf8() +
+      QByteArrayLiteral("\",\"UserId\":1,\"WarpInfoId\":19}");
+  const HttpResult chairUpdateResult =
+      Send(ServerUrl(tcp, QStringLiteral("/chair_messenger/update?user_id=1")),
+           "POST", chairUpdateBody, "text/plain");
+  CHECK(chairUpdateResult.finished);
+  CHECK(chairUpdateResult.status == 200);
+  CHECK(chairUpdateResult.body ==
+        QByteArrayLiteral(
+            "{\"MessageId\":\"ChairMessRespawnPointNoticeResponse\","
+            "\"ResKind\":0}"));
 
   QJsonObject channel =
       SessionRequest(QStringLiteral("ChannelGetInfoRequest"), 1, sessionId);
