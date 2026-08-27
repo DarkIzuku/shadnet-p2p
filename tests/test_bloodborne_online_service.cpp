@@ -10,6 +10,7 @@
 #include <QTemporaryDir>
 
 #include "bloodborne_online_service.h"
+#include "bloodborne_test_fixtures.h"
 #include "database.h"
 
 namespace {
@@ -400,6 +401,76 @@ int main(int argc, char *argv[]) {
               .response.value(QStringLiteral("WanderingGhostList"))
               .toArray()
               .isEmpty());
+
+    const QJsonObject officialGhostRequest =
+        BloodborneTestFixtures::OfficialWanderingGhostGetRequest();
+    CHECK(!officialGhostRequest.isEmpty());
+    const Bloodborne::OnlineResult officialGhostResult =
+        service.GetWanderingGhosts(2, officialGhostRequest);
+    CHECK(officialGhostResult.IsSuccess());
+    CHECK(officialGhostResult.response.value(QStringLiteral("MessageId"))
+              .toString() == QStringLiteral("WanderingGhostGetResponse"));
+
+    const QJsonObject objectJoinedGhostRequest =
+        BloodborneTestFixtures::ObjectJoinedCharaWanderingGhostGetRequest();
+    CHECK(!objectJoinedGhostRequest.isEmpty());
+    const Bloodborne::OnlineResult objectJoinedGhostResult =
+        service.GetWanderingGhosts(2, objectJoinedGhostRequest);
+    CHECK(objectJoinedGhostResult.IsSuccess());
+    CHECK(objectJoinedGhostResult.response.value(QStringLiteral("ResKind"))
+              .toInt(-1) == 0);
+
+    QJsonObject invalidAreaRequest = officialGhostRequest;
+    QJsonObject invalidArea =
+        invalidAreaRequest.value(QStringLiteral("AreaList"))
+            .toArray()
+            .at(0)
+            .toObject();
+    invalidArea.remove(QStringLiteral("ChannelId"));
+    invalidAreaRequest.insert(QStringLiteral("AreaList"),
+                              QJsonArray{invalidArea});
+    const Bloodborne::OnlineResult invalidAreaResult =
+        service.GetWanderingGhosts(2, invalidAreaRequest);
+    CHECK(invalidAreaResult.error == Bloodborne::OnlineError::InvalidRequest);
+    CHECK(invalidAreaResult.detail.contains(
+        QStringLiteral("field=AreaList[0].ChannelId")));
+    CHECK(invalidAreaResult.detail.contains(QStringLiteral("value=<missing>")));
+
+    QJsonArray invalidJoinedValues;
+    invalidJoinedValues.append(QJsonValue(QJsonValue::Null));
+    invalidJoinedValues.append(QStringLiteral("not-a-number"));
+    invalidJoinedValues.append(QJsonArray{});
+    invalidJoinedValues.append(true);
+    for (const QJsonValue &invalidJoinedValue : invalidJoinedValues) {
+      QJsonObject invalidJoinedRequest = officialGhostRequest;
+      invalidJoinedRequest.insert(QStringLiteral("JoinedCharaIdList"),
+                                  QJsonArray{invalidJoinedValue});
+      const Bloodborne::OnlineResult invalidJoinedResult =
+          service.GetWanderingGhosts(2, invalidJoinedRequest);
+      CHECK(invalidJoinedResult.error ==
+            Bloodborne::OnlineError::InvalidRequest);
+      CHECK(invalidJoinedResult.detail.contains(
+          QStringLiteral("field=JoinedCharaIdList[0]")));
+    }
+
+    QJsonObject invalidMaximumRequest = officialGhostRequest;
+    invalidMaximumRequest.insert(QStringLiteral("GetMaxCount"), 101);
+    const Bloodborne::OnlineResult invalidMaximumResult =
+        service.GetWanderingGhosts(2, invalidMaximumRequest);
+    CHECK(invalidMaximumResult.error ==
+          Bloodborne::OnlineError::InvalidRequest);
+    CHECK(invalidMaximumResult.detail.contains(
+        QStringLiteral("field=GetMaxCount")));
+
+    QJsonObject invalidVersionRequest = officialGhostRequest;
+    invalidVersionRequest.remove(QStringLiteral("WanderingGhostDataVersion"));
+    const Bloodborne::OnlineResult invalidVersionResult =
+        service.GetWanderingGhosts(2, invalidVersionRequest);
+    CHECK(invalidVersionResult.error ==
+          Bloodborne::OnlineError::InvalidRequest);
+    CHECK(invalidVersionResult.detail.contains(
+        QStringLiteral("field=WanderingGhostDataVersion")));
+
     const QJsonArray ghosts =
         service.GetWanderingGhosts(2, GhostGetRequest(402718720, 241040))
             .response.value(QStringLiteral("WanderingGhostList"))
@@ -420,6 +491,14 @@ int main(int argc, char *argv[]) {
 
     QJsonObject wildcardGhostRequest = GhostGetRequest(4294967295LL, -1);
     wildcardGhostRequest.insert(QStringLiteral("MatchingLevel"), -1);
+    CHECK(service.GetWanderingGhosts(2, wildcardGhostRequest)
+              .response.value(QStringLiteral("WanderingGhostList"))
+              .toArray()
+              .size() == 1);
+    wildcardGhostRequest.insert(
+        QStringLiteral("JoinedCharaIdList"),
+        BloodborneTestFixtures::ObjectJoinedCharaWanderingGhostGetRequest()
+            .value(QStringLiteral("JoinedCharaIdList")));
     CHECK(service.GetWanderingGhosts(2, wildcardGhostRequest)
               .response.value(QStringLiteral("WanderingGhostList"))
               .toArray()

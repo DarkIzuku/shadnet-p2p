@@ -326,6 +326,12 @@ capture in which newly created IDs never came back to the same user.
 encoded text, and returns it without interpreting or changing the decoded bytes. Normal logs contain
 only record IDs, decoded sizes, and SHA-256 hashes.
 
+`JoinedCharaIdList` accepts the finite numeric entries already supported by shadNet and the object
+entries observed from vanilla Bloodborne. Numeric entries continue to exclude matching ghost owner
+IDs. Until the vanilla object fields are confirmed, object entries are accepted but do not exclude a
+ghost; with `SHADNET_BLOODBORNE_BOOTSTRAP_TRACE` enabled, each object is logged as compact JSON under
+`[BLOODBORNE WG JOINED CHARA]` so its real field contract can be identified without guessing.
+
 The four `/summon_messenger/*` endpoints are not part of this implementation and remain owned by
 the existing `Bloodborne::SummonBroker`.
 
