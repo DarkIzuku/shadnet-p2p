@@ -3,6 +3,7 @@
 #include "webapi_routes_bloodborne_bootstrap.h"
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -20,6 +21,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QString>
+#include <QStringList>
 #include <QUrlQuery>
 #include <QUuid>
 
@@ -113,11 +115,20 @@ public:
     }
 
     std::optional<BootstrapSession> ValidateSession(const QJsonObject& body,
-                                                    const QHttpServerRequest& request) const {
+                                                    const QHttpServerRequest& request,
+                                                    QString* failureReason = nullptr) const {
         const QJsonValue userValue = body.value(QStringLiteral("UserId"));
         const QString sessionId = body.value(QStringLiteral("SessionId")).toString();
-        if (!userValue.isDouble() || sessionId.isEmpty())
+        if (!userValue.isDouble()) {
+            if (failureReason != nullptr)
+                *failureReason = QStringLiteral("envelope.UserId is not a JSON number");
             return std::nullopt;
+        }
+        if (sessionId.isEmpty()) {
+            if (failureReason != nullptr)
+                *failureReason = QStringLiteral("envelope.SessionId is missing or empty");
+            return std::nullopt;
+        }
 
         const qint64 userId = userValue.toVariant().toLongLong();
         const QString queryUserId =
@@ -125,14 +136,28 @@ public:
         if (!queryUserId.isEmpty()) {
             bool queryValid = false;
             const qint64 parsedQueryUserId = queryUserId.toLongLong(&queryValid);
-            if (!queryValid || parsedQueryUserId != userId)
+            if (!queryValid || parsedQueryUserId != userId) {
+                if (failureReason != nullptr) {
+                    *failureReason = QStringLiteral(
+                        "envelope query user_id is invalid or does not match body UserId");
+                }
                 return std::nullopt;
+            }
         }
 
         QMutexLocker lock(&m_mutex);
         const auto it = m_sessions.constFind(userId);
-        if (it == m_sessions.constEnd() || it->userId != userId || it->sessionId != sessionId)
+        if (it == m_sessions.constEnd()) {
+            if (failureReason != nullptr)
+                *failureReason = QStringLiteral("envelope.UserId has no active Bloodborne session");
             return std::nullopt;
+        }
+        if (it->userId != userId || it->sessionId != sessionId) {
+            if (failureReason != nullptr)
+                *failureReason =
+                    QStringLiteral("envelope.SessionId does not match the active session");
+            return std::nullopt;
+        }
         return *it;
     }
 
@@ -198,10 +223,12 @@ void TraceResponse(const QString& api, QHttpServerResponse::StatusCode status,
     if (!EnvEnabled("SHADNET_BLOODBORNE_BOOTSTRAP_TRACE"))
         return;
     const QJsonValue resKind = body.value(QStringLiteral("ResKind"));
+    const QString error = body.value(QStringLiteral("Error")).toString();
     qInfo().noquote() << "[BLOODBORNE LOCAL RESPONSE]"
                       << "api=" + api << "status=" + QString::number(static_cast<int>(status))
                       << "res_kind=" + (resKind.isDouble() ? QString::number(resKind.toInt())
-                                                           : QStringLiteral("<none>"));
+                                                           : QStringLiteral("<none>"))
+                      << "error=" + (error.isEmpty() ? QStringLiteral("<none>") : error);
 }
 
 QHttpServerResponse JsonResponse(
@@ -243,6 +270,115 @@ bool HasArray(const QJsonObject& body, const char* name) {
 
 bool HasMessageId(const QJsonObject& body, const char* expected) {
     return body.value(QStringLiteral("MessageId")).toString() == QLatin1String(expected);
+}
+
+bool IsIntegerInRange(const QJsonValue& value, double minimum, double maximum) {
+    if (!value.isDouble())
+        return false;
+    const double number = value.toDouble();
+    return std::isfinite(number) && std::floor(number) == number && number >= minimum &&
+           number <= maximum;
+}
+
+bool IsUnsigned64JsonInteger(const QJsonValue& value) {
+    if (!value.isDouble())
+        return false;
+    const double number = value.toDouble();
+    constexpr double Uint64LimitExclusive = 18446744073709551616.0; // 2^64
+    return std::isfinite(number) && std::floor(number) == number && number >= 0 &&
+           number < Uint64LimitExclusive;
+}
+
+QString ShapeValue(const QJsonValue& value) {
+    if (value.isUndefined())
+        return QStringLiteral("<missing>");
+    if (value.isNull())
+        return QStringLiteral("null");
+    if (value.isBool())
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    if (value.isDouble())
+        return QString::number(value.toDouble(), 'g', 17);
+    if (value.isString())
+        return QStringLiteral("string(length=%1)").arg(value.toString().size());
+    if (value.isArray())
+        return QStringLiteral("array(count=%1)").arg(value.toArray().size());
+    if (value.isObject())
+        return QStringLiteral("object");
+    return QStringLiteral("<unknown>");
+}
+
+void TraceWanderingGhostGetRequest(const QHttpServerRequest& request,
+                                   const std::optional<QJsonObject>& body) {
+    const QByteArray hash =
+        QCryptographicHash::hash(request.body(), QCryptographicHash::Sha256).toHex().toUpper();
+    const QString queryUserId = QUrlQuery(request.url()).queryItemValue(QStringLiteral("user_id"));
+    const QString contentType = QString::fromLatin1(request.value("Content-Type"));
+
+    QStringList keys;
+    QString messageId = QStringLiteral("<unavailable>");
+    QString bodyUserId = QStringLiteral("<unavailable>");
+    QString sessionIdPresent = QStringLiteral("false");
+    QString areaList = QStringLiteral("<unavailable>");
+    QString joinedList = QStringLiteral("<unavailable>");
+    QString getMaxCount = QStringLiteral("<unavailable>");
+    QString matchingLevel = QStringLiteral("<unavailable>");
+    QString dataVersion = QStringLiteral("<unavailable>");
+    if (body.has_value()) {
+        keys = body->keys();
+        const QJsonValue messageValue = body->value(QStringLiteral("MessageId"));
+        messageId = messageValue.isString() ? messageValue.toString() : ShapeValue(messageValue);
+        bodyUserId = ShapeValue(body->value(QStringLiteral("UserId")));
+        const QJsonValue sessionValue = body->value(QStringLiteral("SessionId"));
+        sessionIdPresent = sessionValue.isString() && !sessionValue.toString().isEmpty()
+                               ? QStringLiteral("true")
+                               : QStringLiteral("false");
+        areaList = ShapeValue(body->value(QStringLiteral("AreaList")));
+        joinedList = ShapeValue(body->value(QStringLiteral("JoinedCharaIdList")));
+        getMaxCount = ShapeValue(body->value(QStringLiteral("GetMaxCount")));
+        matchingLevel = ShapeValue(body->value(QStringLiteral("MatchingLevel")));
+        dataVersion = ShapeValue(body->value(QStringLiteral("WanderingGhostDataVersion")));
+    }
+
+    qInfo().noquote() << "[BLOODBORNE WG GET REQUEST]"
+                      << "query_user_id=" +
+                             (queryUserId.isEmpty() ? QStringLiteral("<none>") : queryUserId)
+                      << "body_user_id=" + bodyUserId
+                      << "content_type=" +
+                             (contentType.isEmpty() ? QStringLiteral("<none>") : contentType)
+                      << "body_size=" + QString::number(request.body().size())
+                      << "body_sha256=" + QString::fromLatin1(hash)
+                      << "keys=" + keys.join(QLatin1Char(',')) << "MessageId=" + messageId
+                      << "SessionId_present=" + sessionIdPresent << "AreaList=" + areaList
+                      << "JoinedCharaIdList=" + joinedList << "GetMaxCount=" + getMaxCount
+                      << "MatchingLevel=" + matchingLevel
+                      << "WanderingGhostDataVersion=" + dataVersion;
+
+    if (!body.has_value() || !body->value(QStringLiteral("AreaList")).isArray())
+        return;
+    const QJsonArray areas = body->value(QStringLiteral("AreaList")).toArray();
+    for (qsizetype index = 0; index < areas.size(); ++index) {
+        if (!areas.at(index).isObject()) {
+            qInfo().noquote() << "[BLOODBORNE WG GET AREA]"
+                              << "index=" + QString::number(index)
+                              << "value=" + ShapeValue(areas.at(index));
+            continue;
+        }
+        const QJsonObject area = areas.at(index).toObject();
+        qInfo().noquote() << "[BLOODBORNE WG GET AREA]"
+                          << "index=" + QString::number(index)
+                          << "AreaId=" + ShapeValue(area.value(QStringLiteral("AreaId")))
+                          << "AreaRegionId=" +
+                                 ShapeValue(area.value(QStringLiteral("AreaRegionId")))
+                          << "ChannelId=" + ShapeValue(area.value(QStringLiteral("ChannelId")))
+                          << "GetCount=" + ShapeValue(area.value(QStringLiteral("GetCount")));
+    }
+}
+
+QHttpServerResponse WanderingGhostGetBadRequest(const QString& api, const QString& reason) {
+    const QString detail = QStringLiteral("WanderingGhostGet validation failed: %1").arg(reason);
+    qWarning().noquote() << "[BLOODBORNE WG GET VALIDATION] result=rejected status=400"
+                         << "reason=" + detail;
+    return ErrorResponse(api, QHttpServerResponse::StatusCode::BadRequest, detail);
 }
 
 bool HasSessionFields(const QJsonObject& body) {
@@ -324,6 +460,71 @@ QHttpServerResponse HandleOnlineEndpoint(const std::shared_ptr<BootstrapRuntime>
     case Bloodborne::OnlineError::None:
         break;
     }
+    return ErrorResponse(api, status, result.detail);
+}
+
+QHttpServerResponse HandleWanderingGhostGetEndpoint(
+    const std::shared_ptr<BootstrapRuntime>& runtime,
+    const std::shared_ptr<Bloodborne::OnlineService>& online, const QHttpServerRequest& request) {
+    const QString api = QStringLiteral("WanderingGhostGet");
+    const auto body = ParseRequest(request);
+    TraceRequest(api, request, body);
+    TraceWanderingGhostGetRequest(request, body);
+
+    if (!body) {
+        if (request.body().isEmpty())
+            return WanderingGhostGetBadRequest(api, QStringLiteral("field=envelope.body expected="
+                                                                   "non-empty JSON object "
+                                                                   "value=empty"));
+        if (request.body().size() > MaxJsonRequestBytes) {
+            return WanderingGhostGetBadRequest(
+                api, QStringLiteral("field=envelope.body expected=at most %1 bytes value=%2 bytes")
+                         .arg(MaxJsonRequestBytes)
+                         .arg(request.body().size()));
+        }
+        return WanderingGhostGetBadRequest(
+            api, QStringLiteral("field=envelope.body expected=JSON object value=invalid_json"));
+    }
+    const QJsonValue messageId = body->value(QStringLiteral("MessageId"));
+    if (!HasMessageId(*body, "WanderingGhostGetRequest")) {
+        return WanderingGhostGetBadRequest(
+            api, QStringLiteral("field=envelope.MessageId expected=WanderingGhostGetRequest "
+                                "value=%1")
+                     .arg(messageId.isString() ? messageId.toString() : ShapeValue(messageId)));
+    }
+    if (!body->value(QStringLiteral("UserId")).isDouble()) {
+        return WanderingGhostGetBadRequest(
+            api, QStringLiteral("field=envelope.UserId expected=JSON number value=%1")
+                     .arg(ShapeValue(body->value(QStringLiteral("UserId")))));
+    }
+    const QJsonValue sessionId = body->value(QStringLiteral("SessionId"));
+    if (!sessionId.isString() || sessionId.toString().isEmpty()) {
+        return WanderingGhostGetBadRequest(
+            api, QStringLiteral("field=envelope.SessionId expected=non-empty string value=%1")
+                     .arg(ShapeValue(sessionId)));
+    }
+
+    QString sessionFailure;
+    const auto session = runtime->ValidateSession(*body, request, &sessionFailure);
+    if (!session) {
+        qWarning().noquote() << "[BLOODBORNE WG GET VALIDATION] result=rejected status=401"
+                             << "reason=" + sessionFailure;
+        return ErrorResponse(api, QHttpServerResponse::StatusCode::Unauthorized,
+                             QStringLiteral("Unknown Bloodborne session"));
+    }
+
+    const Bloodborne::OnlineResult result = online->GetWanderingGhosts(session->userId, *body);
+    if (result.IsSuccess()) {
+        qInfo().noquote() << "[BLOODBORNE WG GET VALIDATION] result=accepted";
+        return JsonResponse(api, result.response);
+    }
+
+    QHttpServerResponse::StatusCode status = QHttpServerResponse::StatusCode::BadRequest;
+    if (result.error == Bloodborne::OnlineError::Database)
+        status = QHttpServerResponse::StatusCode::InternalServerError;
+    qWarning().noquote() << "[BLOODBORNE WG GET VALIDATION] result=rejected"
+                         << "status=" + QString::number(static_cast<int>(status))
+                         << "reason=" + result.detail;
     return ErrorResponse(api, status, result.detail);
 }
 
@@ -521,11 +722,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
 
     http.route("/wandering_ghost/get", QHttpServerRequest::Method::Post,
                [runtime, online](const QHttpServerRequest& request) {
-                   return HandleOnlineEndpoint(runtime, QStringLiteral("WanderingGhostGet"),
-                                               "WanderingGhostGetRequest", request,
-                                               [online](qint64 userId, const QJsonObject& body) {
-                                                   return online->GetWanderingGhosts(userId, body);
-                                               });
+                   return HandleWanderingGhostGetEndpoint(runtime, online, request);
                });
 
     http.route("/chair_messenger/get", QHttpServerRequest::Method::Post,
@@ -538,6 +735,23 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                        },
                        [](const QJsonObject&) {
                            return EmptyListResponse("ChairMessGetListResponse", {"ChairMessList"});
+                       });
+               });
+
+    http.route("/chair_messenger/update", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("ChairMessRespawnPointNotice"),
+                       "ChairMessRespawnPointNoticeRequest", request,
+                       [](const QJsonObject& body) {
+                           return IsUnsigned64JsonInteger(body.value(QStringLiteral("CharaId"))) &&
+                                  IsIntegerInRange(body.value(QStringLiteral("ChannelId")), 0,
+                                                   0x7FFFFFFF) &&
+                                  IsIntegerInRange(body.value(QStringLiteral("WarpInfoId")), 0,
+                                                   0x7FFFFFFF);
+                       },
+                       [](const QJsonObject&) {
+                           return SuccessResponse("ChairMessRespawnPointNoticeResponse");
                        });
                });
 
