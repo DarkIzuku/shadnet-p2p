@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -28,6 +29,17 @@ inline QJsonObject OfficialWanderingGhostGetRequest() {
   "WanderingGhostDataVersion": 5
 })json";
   return QJsonDocument::fromJson(QByteArray(Request)).object();
+}
+
+// The object shape is synthetic and covers only the observed JSON type. Its
+// keys must not be treated as the vanilla Bloodborne field contract.
+inline QJsonObject ObjectJoinedCharaWanderingGhostGetRequest() {
+  QJsonObject request = OfficialWanderingGhostGetRequest();
+  QJsonObject syntheticJoinedChara;
+  syntheticJoinedChara.insert(QStringLiteral("FixtureField"), 123);
+  request.insert(QStringLiteral("JoinedCharaIdList"),
+                 QJsonArray{syntheticJoinedChara});
+  return request;
 }
 
 } // namespace BloodborneTestFixtures

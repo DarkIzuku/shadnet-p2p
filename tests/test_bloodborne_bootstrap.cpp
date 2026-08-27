@@ -461,6 +461,20 @@ int main(int argc, char *argv[]) {
       Post(tcp, QStringLiteral("/wandering_ghost/get?user_id=1"), ghost),
       QStringLiteral("WanderingGhostGetResponse"), {"WanderingGhostList"}));
 
+  QJsonObject objectJoinedGhost =
+      BloodborneTestFixtures::ObjectJoinedCharaWanderingGhostGetRequest();
+  CHECK(!objectJoinedGhost.isEmpty());
+  objectJoinedGhost.insert(QStringLiteral("UserId"), 1);
+  objectJoinedGhost.insert(QStringLiteral("SessionId"), sessionId);
+  const HttpResult objectJoinedGhostResult = Send(
+      ServerUrl(tcp, QStringLiteral("/wandering_ghost/get?user_id=1")), "POST",
+      QJsonDocument(objectJoinedGhost).toJson(QJsonDocument::Compact),
+      "text/plain");
+  CHECK(objectJoinedGhostResult.status == 200);
+  CHECK(Object(objectJoinedGhostResult)
+            .value(QStringLiteral("ResKind"))
+            .toInt(-1) == 0);
+
   QJsonObject invalidGhostEnvelope = ghost;
   invalidGhostEnvelope.remove(QStringLiteral("MessageId"));
   const HttpResult invalidGhostEnvelopeResult =

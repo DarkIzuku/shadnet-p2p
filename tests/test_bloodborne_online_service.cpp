@@ -411,6 +411,15 @@ int main(int argc, char *argv[]) {
     CHECK(officialGhostResult.response.value(QStringLiteral("MessageId"))
               .toString() == QStringLiteral("WanderingGhostGetResponse"));
 
+    const QJsonObject objectJoinedGhostRequest =
+        BloodborneTestFixtures::ObjectJoinedCharaWanderingGhostGetRequest();
+    CHECK(!objectJoinedGhostRequest.isEmpty());
+    const Bloodborne::OnlineResult objectJoinedGhostResult =
+        service.GetWanderingGhosts(2, objectJoinedGhostRequest);
+    CHECK(objectJoinedGhostResult.IsSuccess());
+    CHECK(objectJoinedGhostResult.response.value(QStringLiteral("ResKind"))
+              .toInt(-1) == 0);
+
     QJsonObject invalidAreaRequest = officialGhostRequest;
     QJsonObject invalidArea =
         invalidAreaRequest.value(QStringLiteral("AreaList"))
@@ -427,14 +436,22 @@ int main(int argc, char *argv[]) {
         QStringLiteral("field=AreaList[0].ChannelId")));
     CHECK(invalidAreaResult.detail.contains(QStringLiteral("value=<missing>")));
 
-    QJsonObject invalidJoinedRequest = officialGhostRequest;
-    invalidJoinedRequest.insert(QStringLiteral("JoinedCharaIdList"),
-                                QJsonArray{QStringLiteral("not-a-number")});
-    const Bloodborne::OnlineResult invalidJoinedResult =
-        service.GetWanderingGhosts(2, invalidJoinedRequest);
-    CHECK(invalidJoinedResult.error == Bloodborne::OnlineError::InvalidRequest);
-    CHECK(invalidJoinedResult.detail.contains(
-        QStringLiteral("field=JoinedCharaIdList[0]")));
+    QJsonArray invalidJoinedValues;
+    invalidJoinedValues.append(QJsonValue(QJsonValue::Null));
+    invalidJoinedValues.append(QStringLiteral("not-a-number"));
+    invalidJoinedValues.append(QJsonArray{});
+    invalidJoinedValues.append(true);
+    for (const QJsonValue &invalidJoinedValue : invalidJoinedValues) {
+      QJsonObject invalidJoinedRequest = officialGhostRequest;
+      invalidJoinedRequest.insert(QStringLiteral("JoinedCharaIdList"),
+                                  QJsonArray{invalidJoinedValue});
+      const Bloodborne::OnlineResult invalidJoinedResult =
+          service.GetWanderingGhosts(2, invalidJoinedRequest);
+      CHECK(invalidJoinedResult.error ==
+            Bloodborne::OnlineError::InvalidRequest);
+      CHECK(invalidJoinedResult.detail.contains(
+          QStringLiteral("field=JoinedCharaIdList[0]")));
+    }
 
     QJsonObject invalidMaximumRequest = officialGhostRequest;
     invalidMaximumRequest.insert(QStringLiteral("GetMaxCount"), 101);
@@ -474,6 +491,14 @@ int main(int argc, char *argv[]) {
 
     QJsonObject wildcardGhostRequest = GhostGetRequest(4294967295LL, -1);
     wildcardGhostRequest.insert(QStringLiteral("MatchingLevel"), -1);
+    CHECK(service.GetWanderingGhosts(2, wildcardGhostRequest)
+              .response.value(QStringLiteral("WanderingGhostList"))
+              .toArray()
+              .size() == 1);
+    wildcardGhostRequest.insert(
+        QStringLiteral("JoinedCharaIdList"),
+        BloodborneTestFixtures::ObjectJoinedCharaWanderingGhostGetRequest()
+            .value(QStringLiteral("JoinedCharaIdList")));
     CHECK(service.GetWanderingGhosts(2, wildcardGhostRequest)
               .response.value(QStringLiteral("WanderingGhostList"))
               .toArray()

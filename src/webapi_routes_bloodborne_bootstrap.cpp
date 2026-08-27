@@ -309,6 +309,9 @@ QString ShapeValue(const QJsonValue& value) {
 
 void TraceWanderingGhostGetRequest(const QHttpServerRequest& request,
                                    const std::optional<QJsonObject>& body) {
+    if (!EnvEnabled("SHADNET_BLOODBORNE_BOOTSTRAP_TRACE"))
+        return;
+
     const QByteArray hash =
         QCryptographicHash::hash(request.body(), QCryptographicHash::Sha256).toHex().toUpper();
     const QString queryUserId = QUrlQuery(request.url()).queryItemValue(QStringLiteral("user_id"));
@@ -371,6 +374,20 @@ void TraceWanderingGhostGetRequest(const QHttpServerRequest& request,
                                  ShapeValue(area.value(QStringLiteral("AreaRegionId")))
                           << "ChannelId=" + ShapeValue(area.value(QStringLiteral("ChannelId")))
                           << "GetCount=" + ShapeValue(area.value(QStringLiteral("GetCount")));
+    }
+
+    if (!body->value(QStringLiteral("JoinedCharaIdList")).isArray())
+        return;
+    const QJsonArray joinedValues = body->value(QStringLiteral("JoinedCharaIdList")).toArray();
+    for (qsizetype index = 0; index < joinedValues.size(); ++index) {
+        const QJsonValue value = joinedValues.at(index);
+        if (!value.isObject())
+            continue;
+        const QByteArray compactJson =
+            QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact);
+        qInfo().noquote() << "[BLOODBORNE WG JOINED CHARA]"
+                          << "index=" + QString::number(index)
+                          << "json=" + QString::fromUtf8(compactJson);
     }
 }
 

@@ -782,11 +782,17 @@ OnlineResult OnlineService::GetWanderingGhosts(qint64 userId, const QJsonObject&
     const QJsonArray joinedValues = joinedListValue.toArray();
     for (qsizetype index = 0; index < joinedValues.size(); ++index) {
         const QJsonValue value = joinedValues.at(index);
-        if (!value.isDouble() || !std::isfinite(value.toDouble())) {
-            return InvalidWanderingGhostGet(QStringLiteral("JoinedCharaIdList[%1]").arg(index),
-                                            QStringLiteral("finite JSON number"), value);
+        if (value.isDouble() && std::isfinite(value.toDouble())) {
+            joinedCharaIds.insert(NumberKey(value.toDouble()));
+            continue;
         }
-        joinedCharaIds.insert(NumberKey(value.toDouble()));
+        if (value.isObject()) {
+            // Vanilla Bloodborne also sends object entries. Their internal field contract is not
+            // known yet, so accept them without guessing an ID to add to the exclusion set.
+            continue;
+        }
+        return InvalidWanderingGhostGet(QStringLiteral("JoinedCharaIdList[%1]").arg(index),
+                                        QStringLiteral("finite JSON number or object"), value);
     }
     if (!PurgeExpiredGhosts(m_db.Conn()))
         return Failure(OnlineError::Database, QStringLiteral("purge wandering ghosts"));
