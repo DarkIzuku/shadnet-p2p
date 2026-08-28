@@ -536,6 +536,70 @@ int main(int argc, char *argv[]) {
             "{\"MessageId\":\"ChairMessRespawnPointNoticeResponse\","
             "\"ResKind\":0}"));
 
+  // Reproduce the exact fixed-ritual client order seen in the failing altar
+  // trace: move-count success, captured fixed ChannelSearch, then details/info.
+  CHECK(IsSuccessful(
+      Post(tcp,
+           QStringLiteral(
+               "/penalty/notify_user_properties_move_count?user_id=1"),
+           penaltyNotify),
+      QStringLiteral("UserPropertiesMoveCountResponse")));
+  QJsonObject fixedSearch =
+      BloodborneTestFixtures::OfficialFixedChannelSearchRequest();
+  fixedSearch.insert(QStringLiteral("UserId"), 1);
+  fixedSearch.insert(QStringLiteral("SessionId"), sessionId);
+  const HttpResult fixedSearchResult =
+      Post(tcp, QStringLiteral("/channel/search?user_id=1"), fixedSearch);
+  CHECK(
+      IsSuccessful(fixedSearchResult, QStringLiteral("ChannelSearchResponse")));
+  const QJsonArray fixedChannels =
+      Object(fixedSearchResult).value(QStringLiteral("ChannelList")).toArray();
+  CHECK(fixedChannels.size() == 1);
+  const QJsonObject fixedChannel = fixedChannels.at(0).toObject();
+  CHECK(fixedChannel.value(QStringLiteral("ChannelId")).toInteger() == 10);
+  CHECK(fixedChannel.value(QStringLiteral("DiscernmentWord")).toString() ==
+        QStringLiteral("3n7q"));
+  CHECK(fixedChannel.value(QStringLiteral("FixedOrGeneral")).toInt() == 2);
+  CHECK(fixedChannel.value(QStringLiteral("HolyGrailTypeId")).toInt() == 0);
+  CHECK(fixedChannel.value(QStringLiteral("RitualLevel")).toInt() == 1);
+  CHECK(fixedChannel.value(QStringLiteral("SubFeatureFlag")).toInt() == 256);
+  CHECK(fixedChannel.value(QStringLiteral("FormData")).toString() ==
+        QLatin1String(
+            BloodborneTestFixtures::OfficialFixedChalices.back().formData));
+
+  const QJsonArray fixedIdList{QJsonObject{{QStringLiteral("ChannelId"), 10}}};
+  QJsonObject fixedDetails = SessionRequest(
+      QStringLiteral("ChannelGetDetailsInfoRequest"), 1, sessionId);
+  fixedDetails.insert(QStringLiteral("ChannelIdList"), fixedIdList);
+  const HttpResult fixedDetailsResult = Post(
+      tcp, QStringLiteral("/channel/get_details_info?user_id=1"), fixedDetails);
+  CHECK(IsSuccessful(fixedDetailsResult,
+                     QStringLiteral("ChannelGetDetailsInfoResponse")));
+  CHECK(Object(fixedDetailsResult)
+            .value(QStringLiteral("ChannelList"))
+            .toArray()
+            .size() == 1);
+  CHECK(Object(fixedDetailsResult)
+            .value(QStringLiteral("LostChannelIdList"))
+            .toArray()
+            .isEmpty());
+
+  QJsonObject fixedInfo =
+      SessionRequest(QStringLiteral("ChannelGetInfoRequest"), 1, sessionId);
+  fixedInfo.insert(QStringLiteral("ChannelIdList"), fixedIdList);
+  const HttpResult fixedInfoResult =
+      Post(tcp, QStringLiteral("/channel/get_info?user_id=1"), fixedInfo);
+  CHECK(
+      IsSuccessful(fixedInfoResult, QStringLiteral("ChannelGetInfoResponse")));
+  CHECK(Object(fixedInfoResult)
+            .value(QStringLiteral("ChannelInfoList"))
+            .toArray()
+            .size() == 1);
+  CHECK(Object(fixedInfoResult)
+            .value(QStringLiteral("LostChannelIdList"))
+            .toArray()
+            .isEmpty());
+
   QJsonObject channel =
       SessionRequest(QStringLiteral("ChannelGetInfoRequest"), 1, sessionId);
   channel.insert(QStringLiteral("ChannelIdList"), QJsonArray{});

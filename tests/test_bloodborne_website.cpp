@@ -510,6 +510,13 @@ int main(int argc, char *argv[]) {
   CHECK(!chaliceDetail.body.contains("Authorization"));
   CHECK(!chaliceDetail.body.contains("izuku@example.test"));
   CHECK(!Data(chaliceDetail).contains(QStringLiteral("createCharaId")));
+  CHECK(Data(Send(Url(server, QStringLiteral("/api/chalices?glyph=3n7q")),
+                  QByteArrayLiteral("GET")))
+            .value(QStringLiteral("total"))
+            .toInt(-1) == 0);
+  CHECK(Send(Url(server, QStringLiteral("/api/chalices/3n7q")),
+             QByteArrayLiteral("GET"))
+            .status == 404);
   CHECK(Send(Url(server, QStringLiteral("/api/chalices/9hidden2")),
              QByteArrayLiteral("GET"))
             .status == 404);

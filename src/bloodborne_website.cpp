@@ -797,7 +797,8 @@ private:
             return JsonError(Status(400), QStringLiteral("invalid_pagination"),
                              QStringLiteral("Invalid Chalice pagination"));
 
-        QStringList conditions{QStringLiteral("c.share_level=2")};
+        QStringList conditions{QStringLiteral("c.origin='community'"),
+                               QStringLiteral("c.share_level=2")};
         QList<QVariant> bindings;
         if (!glyph.isEmpty()) {
             conditions.append(QStringLiteral("c.discernment_word=?"));
@@ -837,7 +838,8 @@ private:
         const qint64 total = count.value(0).toLongLong();
         qint64 storedTotal = 0;
         QSqlQuery storedCount(m_db->Conn());
-        if (storedCount.exec(QStringLiteral("SELECT COUNT(*) FROM bloodborne_chalice")) &&
+        if (storedCount.exec(QStringLiteral(
+                "SELECT COUNT(*) FROM bloodborne_chalice WHERE origin='community'")) &&
             storedCount.next()) {
             storedTotal = storedCount.value(0).toLongLong();
         } else {
@@ -878,7 +880,8 @@ private:
                              QStringLiteral("Chalice not found"));
         QSqlQuery query(m_db->Conn());
         query.prepare(ChaliceSelect() +
-                      QStringLiteral("WHERE c.discernment_word=? AND c.share_level=2 LIMIT 1"));
+                      QStringLiteral("WHERE c.discernment_word=? AND c.origin='community' "
+                                     "AND c.share_level=2 LIMIT 1"));
         query.addBindValue(glyph);
         if (!query.exec() || !query.next())
             return JsonError(Status(404), QStringLiteral("chalice_not_found"),
@@ -894,7 +897,7 @@ private:
         QSqlQuery query(m_db->Conn());
         query.prepare(
             QStringLiteral("SELECT map_data_json FROM bloodborne_chalice WHERE discernment_word=? "
-                           "AND share_level=2 LIMIT 1"));
+                           "AND origin='community' AND share_level=2 LIMIT 1"));
         query.addBindValue(glyph);
         if (!query.exec() || !query.next())
             return JsonError(Status(404), QStringLiteral("chalice_not_found"),

@@ -95,6 +95,7 @@ set(SOURCES
     src/bloodborne_bootstrap.cpp
     src/bloodborne_online_service.h
     src/bloodborne_online_service.cpp
+    src/bloodborne_chalice_fixed_catalog.h
     src/bloodborne_chalice_service.h
     src/bloodborne_chalice_service.cpp
     src/bloodborne_ssinfo_reference.h

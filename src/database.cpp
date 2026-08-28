@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2019-2026 rpcsn Project
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <algorithm>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -10,6 +11,7 @@
 #include <QSqlRecord>
 #include <QUuid>
 #include <qcryptographichash.h>
+#include "bloodborne_chalice_fixed_catalog.h"
 #include "database.h"
 
 QByteArray Database::GenerateSalt(int bytes) {
@@ -394,6 +396,8 @@ bool Database::Migrate() {
         "  unlock_flag_list TEXT NOT NULL,"
         "  wish_material_list TEXT NOT NULL,"
         "  random_join_count INTEGER NOT NULL DEFAULT 0,"
+        "  origin TEXT NOT NULL DEFAULT 'community' "
+        "    CHECK(origin IN ('vanilla_fixed','community')),"
         // Reserved for a future decoded SVG/Canvas layout. Raw maps are never stored as PNG.
         "  map_data_json TEXT)",
         "CREATE UNIQUE INDEX IF NOT EXISTS bloodborne_chalice_glyph "
@@ -414,6 +418,178 @@ bool Database::Migrate() {
     ins7.prepare("INSERT OR IGNORE INTO migration VALUES(7,'Bloodborne Chalice Dungeons')");
     if (!Exec(ins7))
         return false;
+
+    // Migration 8: reserve the captured vanilla IDs, classify existing player rows as
+    // community data, and seed the fixed ritual catalog. SQLite does not support a useful
+    // ADD COLUMN IF NOT EXISTS on all versions shipped with Qt, so inspect the schema first.
+    if (!m_db.transaction()) {
+        m_lastError = m_db.lastError().text();
+        return false;
+    }
+    const auto migration8Failure = [this](const QString& error) {
+        m_lastError = error;
+        m_db.rollback();
+        return false;
+    };
+
+    bool hasOrigin = false;
+    QSqlQuery columns(m_db);
+    if (!columns.exec(QStringLiteral("PRAGMA table_info(bloodborne_chalice)")))
+        return migration8Failure(columns.lastError().text());
+    while (columns.next()) {
+        if (columns.value(1).toString() == QStringLiteral("origin")) {
+            hasOrigin = true;
+            break;
+        }
+    }
+    columns.finish();
+    if (!hasOrigin && !Exec(QStringLiteral(
+                          "ALTER TABLE bloodborne_chalice ADD COLUMN origin TEXT NOT NULL "
+                          "DEFAULT 'community' CHECK(origin IN ('vanilla_fixed','community'))"))) {
+        m_db.rollback();
+        return false;
+    }
+    if (!Exec(QStringLiteral(
+            "UPDATE bloodborne_chalice SET origin='community' WHERE origin IS NULL"))) {
+        m_db.rollback();
+        return false;
+    }
+
+    QSqlQuery existingFixed(m_db);
+    if (!existingFixed.exec(QStringLiteral(
+            "SELECT COUNT(*) FROM bloodborne_chalice WHERE origin='vanilla_fixed'")) ||
+        !existingFixed.next()) {
+        return migration8Failure(existingFixed.lastError().text());
+    }
+    const int existingFixedCount = existingFixed.value(0).toInt();
+
+    QSqlQuery maximumId(m_db);
+    if (!maximumId.exec(
+            QStringLiteral("SELECT MAX(COALESCE(channel_id,0)) FROM bloodborne_chalice")) ||
+        !maximumId.next()) {
+        return migration8Failure(maximumId.lastError().text());
+    }
+    qint64 nextCommunityId = std::max<qint64>(maximumId.value(0).toLongLong(), 10);
+    int remappedCommunityIds = 0;
+    QSqlQuery collision(m_db);
+    collision.prepare(
+        QStringLiteral("SELECT origin FROM bloodborne_chalice WHERE channel_id=? LIMIT 1"));
+    QSqlQuery remap(m_db);
+    remap.prepare(QStringLiteral(
+        "UPDATE bloodborne_chalice SET channel_id=? WHERE channel_id=? AND origin='community'"));
+    for (const Bloodborne::CapturedFixedChalice& fixture : Bloodborne::CapturedFixedChalices) {
+        collision.bindValue(0, fixture.channelId);
+        if (!collision.exec())
+            return migration8Failure(collision.lastError().text());
+        if (collision.next() && collision.value(0).toString() != QStringLiteral("vanilla_fixed")) {
+            remap.bindValue(0, ++nextCommunityId);
+            remap.bindValue(1, fixture.channelId);
+            if (!remap.exec() || remap.numRowsAffected() != 1)
+                return migration8Failure(remap.lastError().text());
+            ++remappedCommunityIds;
+        }
+        collision.finish();
+    }
+
+    QSqlQuery insertFixed(m_db);
+    insertFixed.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO bloodborne_chalice("
+        "channel_id,discernment_word,create_user_id,create_chara_id,create_date,"
+        "last_play_date,fixed_or_general,form_data,form_data_version,holy_grail_type_id,"
+        "ritual_level,share_level,status,sub_feature_flag,turnout_level,unlock_flag_list,"
+        "wish_material_list,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+    QSqlQuery validateFixed(m_db);
+    validateFixed.prepare(QStringLiteral(
+        "SELECT discernment_word,create_user_id,create_chara_id,create_date,last_play_date,"
+        "fixed_or_general,form_data,form_data_version,holy_grail_type_id,ritual_level,"
+        "share_level,status,sub_feature_flag,turnout_level,unlock_flag_list,"
+        "wish_material_list,origin FROM bloodborne_chalice WHERE channel_id=?"));
+    for (const Bloodborne::CapturedFixedChalice& fixture : Bloodborne::CapturedFixedChalices) {
+        const QString glyph = QString::fromLatin1(fixture.glyph);
+        const QString date = QString::fromLatin1(fixture.date);
+        const QString formData = QString::fromLatin1(fixture.formData);
+        const QString unlockFlags =
+            QStringLiteral("[{\"UnlockFlag\":0},{\"UnlockFlag\":%1},{\"UnlockFlag\":0}]")
+                .arg(fixture.unlockFlag);
+        insertFixed.bindValue(0, fixture.channelId);
+        insertFixed.bindValue(1, glyph);
+        insertFixed.bindValue(2, 0);
+        insertFixed.bindValue(3, QStringLiteral("0"));
+        insertFixed.bindValue(4, date);
+        insertFixed.bindValue(5, date);
+        insertFixed.bindValue(6, 2);
+        insertFixed.bindValue(7, formData);
+        insertFixed.bindValue(8, 0);
+        insertFixed.bindValue(9, fixture.holyGrailTypeId);
+        insertFixed.bindValue(10, fixture.ritualLevel);
+        insertFixed.bindValue(11, 2);
+        insertFixed.bindValue(12, 1);
+        insertFixed.bindValue(13, 256);
+        insertFixed.bindValue(14, 0);
+        insertFixed.bindValue(15, unlockFlags);
+        insertFixed.bindValue(16, QStringLiteral("[]"));
+        insertFixed.bindValue(17, QStringLiteral("vanilla_fixed"));
+        if (!insertFixed.exec())
+            return migration8Failure(insertFixed.lastError().text());
+
+        validateFixed.bindValue(0, fixture.channelId);
+        if (!validateFixed.exec() || !validateFixed.next())
+            return migration8Failure(validateFixed.lastError().text());
+        const bool valid =
+            validateFixed.value(0).toString() == glyph && validateFixed.value(1).toInt() == 0 &&
+            validateFixed.value(2).toString() == QStringLiteral("0") &&
+            validateFixed.value(3).toString() == date &&
+            validateFixed.value(4).toString() == date && validateFixed.value(5).toInt() == 2 &&
+            validateFixed.value(6).toString() == formData && validateFixed.value(7).toInt() == 0 &&
+            validateFixed.value(8).toInt() == fixture.holyGrailTypeId &&
+            validateFixed.value(9).toInt() == fixture.ritualLevel &&
+            validateFixed.value(10).toInt() == 2 && validateFixed.value(11).toInt() == 1 &&
+            validateFixed.value(12).toInt() == 256 && validateFixed.value(13).toInt() == 0 &&
+            validateFixed.value(14).toString() == unlockFlags &&
+            validateFixed.value(15).toString() == QStringLiteral("[]") &&
+            validateFixed.value(16).toString() == QStringLiteral("vanilla_fixed");
+        validateFixed.finish();
+        if (!valid) {
+            return migration8Failure(
+                QStringLiteral("Captured fixed Chalice integrity check failed for ChannelId %1")
+                    .arg(fixture.channelId));
+        }
+    }
+
+    if (!Exec(QStringLiteral("CREATE INDEX IF NOT EXISTS bloodborne_chalice_origin "
+                             "ON bloodborne_chalice(origin,share_level,status,channel_id)"))) {
+        m_db.rollback();
+        return false;
+    }
+    QSqlQuery sequence(m_db);
+    if (!sequence.exec(QStringLiteral(
+            "UPDATE sqlite_sequence SET seq=(SELECT MAX(channel_id) FROM bloodborne_chalice) "
+            "WHERE name='bloodborne_chalice'"))) {
+        return migration8Failure(sequence.lastError().text());
+    }
+    if (sequence.numRowsAffected() == 0) {
+        if (!sequence.exec(
+                QStringLiteral("INSERT INTO sqlite_sequence(name,seq) VALUES('bloodborne_chalice',"
+                               "(SELECT MAX(channel_id) FROM bloodborne_chalice))"))) {
+            return migration8Failure(sequence.lastError().text());
+        }
+    }
+
+    QSqlQuery ins8(m_db);
+    ins8.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO migration VALUES(8,'Bloodborne fixed Chalice catalog')"));
+    if (!ins8.exec())
+        return migration8Failure(ins8.lastError().text());
+    if (!m_db.commit()) {
+        m_lastError = m_db.lastError().text();
+        return false;
+    }
+    const int insertedFixedCount =
+        static_cast<int>(Bloodborne::CapturedFixedChalices.size()) - existingFixedCount;
+    qInfo().noquote() << "[BLOODBORNE CHALICE FIXED BOOTSTRAP]"
+                      << "inserted=" + QString::number(std::max(0, insertedFixedCount))
+                      << "existing=" + QString::number(existingFixedCount)
+                      << "remapped_community_ids=" + QString::number(remappedCommunityIds);
 
     qInfo() << "Database migrations complete";
 

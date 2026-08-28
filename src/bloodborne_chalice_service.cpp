@@ -135,7 +135,7 @@ QString ChannelColumns() {
         "channel_id,create_chara_id,create_date,create_user_id,discernment_word,"
         "fixed_or_general,form_data,form_data_version,holy_grail_type_id,last_play_date,"
         "ritual_level,share_level,status,sub_feature_flag,turnout_level,unlock_flag_list,"
-        "wish_material_list");
+        "wish_material_list,origin");
 }
 
 std::optional<QJsonObject> ChannelObject(const QSqlQuery& query) {
@@ -222,7 +222,8 @@ OnlineResult ChaliceService::Upload(qint64 userId, const QJsonObject& request) {
         "INSERT INTO bloodborne_chalice(discernment_word,create_user_id,create_chara_id,"
         "create_date,last_play_date,fixed_or_general,form_data,form_data_version,"
         "holy_grail_type_id,ritual_level,share_level,status,sub_feature_flag,turnout_level,"
-        "unlock_flag_list,wish_material_list) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        "unlock_flag_list,wish_material_list,origin) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
 
     for (int attempt = 0; attempt < 32; ++attempt) {
         const QString glyph = GenerateGlyph();
@@ -242,6 +243,7 @@ OnlineResult ChaliceService::Upload(qint64 userId, const QJsonObject& request) {
         insert.bindValue(13, 0);
         insert.bindValue(14, unlockFlags);
         insert.bindValue(15, wishMaterials);
+        insert.bindValue(16, QStringLiteral("community"));
         if (insert.exec()) {
             const qint64 channelId = insert.lastInsertId().toLongLong();
             OnlineResult result = Success("ChannelUploadResponse");
@@ -388,17 +390,22 @@ OnlineResult ChaliceService::Search(qint64 userId, const QJsonObject& request) {
         return SqlFailure(query, QStringLiteral("Could not search Chalices"));
 
     QJsonArray channels;
+    QSet<QString> origins;
     while (query.next()) {
         const auto channel = ChannelObject(query);
         if (!channel)
             return Failure(OnlineError::Database, QStringLiteral("Stored Chalice is invalid"));
         channels.append(*channel);
+        origins.insert(query.value(17).toString());
     }
     OnlineResult result = Success("ChannelSearchResponse");
     result.response.insert(QStringLiteral("ChannelList"), channels);
     qInfo().noquote() << "[BLOODBORNE CHALICE SEARCH]"
                       << "user_id=" + QString::number(userId)
-                      << "results=" + QString::number(channels.size());
+                      << "results=" + QString::number(channels.size())
+                      << "origin=" + (origins.isEmpty()     ? QStringLiteral("none")
+                                      : origins.size() == 1 ? *origins.constBegin()
+                                                            : QStringLiteral("mixed"));
     return result;
 }
 
@@ -496,7 +503,8 @@ OnlineResult ChaliceService::RandomJoin(qint64 userId, const QJsonObject& reques
         return Failure(OnlineError::Database, QStringLiteral("Could not start random join"));
     QSqlQuery query(db);
     query.prepare(QStringLiteral("SELECT ") + ChannelColumns() +
-                  QStringLiteral(" FROM bloodborne_chalice WHERE share_level=2 AND status=1 "
+                  QStringLiteral(" FROM bloodborne_chalice WHERE origin='community' "
+                                 "AND share_level=2 AND status=1 "
                                  "AND form_data_version=? AND (") +
                   targets.join(QStringLiteral(" OR ")) +
                   QStringLiteral(") ORDER BY random_join_count ASC,last_play_date ASC,"

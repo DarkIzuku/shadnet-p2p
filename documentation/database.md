@@ -211,3 +211,14 @@ until an observed delete flow removes them or the owning account is deleted. Wan
 an `expires_at` timestamp controlled by `BloodborneGhostLifetimeSeconds`.
 
 ---
+
+## Migration 8: Bloodborne fixed Chalice catalog
+
+Migration 8 adds the `origin` classification to `bloodborne_chalice`, marks existing player rows as
+`community`, and inserts the ten captured `vanilla_fixed` ritual records. The bootstrap validates
+every captured field on every startup and uses the original `ChannelId` values. Community rows that
+already occupy a reserved fixed ID are preserved at a new free ID, after which `sqlite_sequence` is
+advanced to prevent future `ChannelUpload` collisions. The operation does not recreate the table or
+touch accounts, profiles, messages, multiplayer data, `data/`, or configuration.
+
+---
