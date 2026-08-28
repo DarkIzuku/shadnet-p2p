@@ -26,6 +26,7 @@
 #include <QUuid>
 
 #include "bloodborne_bootstrap.h"
+#include "bloodborne_chalice_service.h"
 #include "bloodborne_online_service.h"
 #include "bloodborne_ssinfo_reference.h"
 #include "client_session.h"
@@ -202,8 +203,8 @@ void TraceRequest(const QString& api, const QHttpServerRequest& request,
 
     if (!body.has_value())
         return;
-    static const std::array<const char*, 4> BlobFields{"BloodData", "TombData",
-                                                       "WanderingGhostData", "ShellData"};
+    static const std::array<const char*, 5> BlobFields{
+        "BloodData", "TombData", "WanderingGhostData", "ShellData", "FormData"};
     for (const char* field : BlobFields) {
         const QJsonValue value = body->value(QLatin1String(field));
         if (!value.isString())
@@ -572,6 +573,7 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
     const auto runtime = std::make_shared<BootstrapRuntime>(db, shared);
     const auto online = std::make_shared<Bloodborne::OnlineService>(db, ghostLifetimeSeconds,
                                                                     websiteMetricsEnabled);
+    const auto chalices = std::make_shared<Bloodborne::ChaliceService>(db);
 
     http.route(
         "/basic_utils/login", QHttpServerRequest::Method::Post,
@@ -702,11 +704,105 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                    return HandleSessionEndpoint(
                        runtime, QStringLiteral("UserPropertiesMoveCountCheck"),
                        "UserPropertiesMoveCountCheckRequest", request,
-                       [](const QJsonObject& body) { return HasNumber(body, "Count"); },
+                       [](const QJsonObject& body) {
+                           return IsIntegerInRange(body.value(QStringLiteral("Count")), 0,
+                                                   0x7FFFFFFF);
+                       },
                        [](const QJsonObject&) {
                            return SuccessResponse("UserPropertiesMoveCountCheckResponse");
                        });
                });
+
+    http.route("/penalty/notify_user_properties_move_count", QHttpServerRequest::Method::Post,
+               [runtime](const QHttpServerRequest& request) {
+                   return HandleSessionEndpoint(
+                       runtime, QStringLiteral("UserPropertiesMoveCount"),
+                       "UserPropertiesMoveCountRequest", request,
+                       [](const QJsonObject& body) {
+                           return IsIntegerInRange(body.value(QStringLiteral("Count")), 0,
+                                                   0x7FFFFFFF);
+                       },
+                       [](const QJsonObject&) {
+                           return SuccessResponse("UserPropertiesMoveCountResponse");
+                       });
+               });
+
+    http.route("/channel/upload", QHttpServerRequest::Method::Post,
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelUpload"),
+                                               "ChannelUploadRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->Upload(userId, body);
+                                               });
+               });
+
+    http.route("/channel/share", QHttpServerRequest::Method::Post,
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelShare"),
+                                               "ChannelShareRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->Share(userId, body);
+                                               });
+               });
+
+    http.route("/channel/search", QHttpServerRequest::Method::Post,
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelSearch"),
+                                               "ChannelSearchRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->Search(userId, body);
+                                               });
+               });
+
+    http.route("/channel/word_search", QHttpServerRequest::Method::Post,
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelWordSearch"),
+                                               "ChannelWordSearchRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->WordSearch(userId, body);
+                                               });
+               });
+
+    http.route("/channel/get_details_info", QHttpServerRequest::Method::Post,
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelGetDetailsInfo"),
+                                               "ChannelGetDetailsInfoRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->GetDetailsInfo(userId, body);
+                                               });
+               });
+
+    http.route("/channel/random_join", QHttpServerRequest::Method::Post,
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelRandomJoin"),
+                                               "ChannelRandomJoinRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->RandomJoin(userId, body);
+                                               });
+               });
+
+    const auto pendingChaliceMaterial = [](const QHttpServerRequest& request) {
+        const QString api = QStringLiteral("ChannelMaterialPending");
+        const auto body = ParseRequest(request);
+        TraceRequest(api, request, body);
+        const QString messageId =
+            body ? body->value(QStringLiteral("MessageId")).toString() : QString();
+        const qint64 userId = body && body->value(QStringLiteral("UserId")).isDouble()
+                                  ? body->value(QStringLiteral("UserId")).toInteger()
+                                  : 0;
+        qWarning().noquote() << "[BLOODBORNE CHALICE PENDING]"
+                             << "path=" + request.url().path()
+                             << "user_id=" + QString::number(userId)
+                             << "message_id=" +
+                                    (messageId.isEmpty() ? QStringLiteral("<missing>") : messageId);
+        return ErrorResponse(api, QHttpServerResponse::StatusCode::NotImplemented,
+                             QStringLiteral("Chalice material contract not captured"));
+    };
+    http.route("/channel/add_material", QHttpServerRequest::Method::Post, pendingChaliceMaterial);
+    http.route("/channel/add_material_complete_notify", QHttpServerRequest::Method::Post,
+               pendingChaliceMaterial);
+    http.route("/channel/notify_add_material_complete", QHttpServerRequest::Method::Post,
+               pendingChaliceMaterial);
 
     http.route("/blood_messenger/exist_messages", QHttpServerRequest::Method::Post,
                [runtime, online](const QHttpServerRequest& request) {
@@ -773,14 +869,12 @@ void RegisterBloodborneBootstrapRoutes(QHttpServer& http, Database& db, SharedSt
                });
 
     http.route("/channel/get_info", QHttpServerRequest::Method::Post,
-               [runtime](const QHttpServerRequest& request) {
-                   return HandleSessionEndpoint(
-                       runtime, QStringLiteral("ChannelGetInfo"), "ChannelGetInfoRequest", request,
-                       [](const QJsonObject& body) { return HasArray(body, "ChannelIdList"); },
-                       [](const QJsonObject&) {
-                           return EmptyListResponse("ChannelGetInfoResponse",
-                                                    {"ChannelInfoList", "LostChannelIdList"});
-                       });
+               [runtime, chalices](const QHttpServerRequest& request) {
+                   return HandleOnlineEndpoint(runtime, QStringLiteral("ChannelGetInfo"),
+                                               "ChannelGetInfoRequest", request,
+                                               [chalices](qint64 userId, const QJsonObject& body) {
+                                                   return chalices->GetInfo(userId, body);
+                                               });
                });
 
     http.route("/blood_messenger/evaluation", QHttpServerRequest::Method::Post,

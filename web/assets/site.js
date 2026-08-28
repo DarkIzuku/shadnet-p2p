@@ -45,7 +45,21 @@
       communionLead: "Share words with every hunter gathered beyond the veil.",
       huntersListening: "{n} hunters online", noChatMessages: "The communion is silent.",
       chatPlaceholder: "Write a message...", send: "Send", loginToChat: "Enter the dream to speak.",
-      chatReset: "The communion is cleansed every {n} hours.", chatTooFast: "Wait a moment before speaking again."
+      chatReset: "The communion is cleansed every {n} hours.", chatTooFast: "Wait a moment before speaking again.",
+      chalices: "Chalices", chalicesTitle: "Chalice Dungeons",
+      chalicesLead: "Explore locally hosted dungeons and copy their glyphs into Bloodborne.",
+      storedChalices: "Stored Chalices", exactGlyph: "Exact Glyph", glyph: "Glyph",
+      depth: "Depth / Ritual Level", allDepths: "All depths", typeId: "Holy Grail Type ID",
+      ritesId: "SubFeatureFlag", filters: "Apply filters", clear: "Clear",
+      noChalices: "No open Chalices match these filters.", creator: "Creator",
+      imported: "Imported", privacy: "Privacy", open: "Open", closed: "Closed",
+      unshared: "Unshared", copyGlyph: "Copy Glyph", copied: "Copied", previous: "Previous",
+      next: "Next", pageOf: "Page {page} of {pages}", chaliceDetails: "Chalice Details",
+      fixedOrGeneral: "FixedOrGeneral", status: "Status", subFeatureFlag: "SubFeatureFlag",
+      channelId: "ChannelId", created: "Created", lastPlayed: "Last played",
+      formDataVersion: "FormDataVersion", formDataBytes: "FormData size", bytes: "bytes",
+      dungeonMap: "Dungeon Map", mapPending: "Map data not yet decoded",
+      backToChalices: "Back to Chalices"
     },
     es: {
       menu: "Menú", home: "Inicio", hunters: "Cazadores", stats: "Estadísticas", register: "Registro",
@@ -88,7 +102,21 @@
       communionLead: "Comparte palabras con todos los cazadores reunidos más allá del velo.",
       huntersListening: "{n} cazadores en línea", noChatMessages: "La comunión guarda silencio.",
       chatPlaceholder: "Escribe un mensaje...", send: "Enviar", loginToChat: "Entra al sueño para hablar.",
-      chatReset: "La comunión se purifica cada {n} horas.", chatTooFast: "Espera un momento antes de volver a hablar."
+      chatReset: "La comunión se purifica cada {n} horas.", chatTooFast: "Espera un momento antes de volver a hablar.",
+      chalices: "Cálices", chalicesTitle: "Mazmorras de Cáliz",
+      chalicesLead: "Explora mazmorras alojadas localmente y copia sus glyphs en Bloodborne.",
+      storedChalices: "Cálices almacenados", exactGlyph: "Glyph exacto", glyph: "Glyph",
+      depth: "Profundidad / Ritual Level", allDepths: "Todas las profundidades", typeId: "Holy Grail Type ID",
+      ritesId: "SubFeatureFlag", filters: "Aplicar filtros", clear: "Limpiar",
+      noChalices: "Ningún Cáliz abierto coincide con estos filtros.", creator: "Creador",
+      imported: "Importado", privacy: "Privacidad", open: "Abierto", closed: "Cerrado",
+      unshared: "Sin compartir", copyGlyph: "Copiar Glyph", copied: "Copiado", previous: "Anterior",
+      next: "Siguiente", pageOf: "Página {page} de {pages}", chaliceDetails: "Detalles del Cáliz",
+      fixedOrGeneral: "FixedOrGeneral", status: "Status", subFeatureFlag: "SubFeatureFlag",
+      channelId: "ChannelId", created: "Creado", lastPlayed: "Última partida",
+      formDataVersion: "FormDataVersion", formDataBytes: "Tamaño de FormData", bytes: "bytes",
+      dungeonMap: "Mapa de la mazmorra", mapPending: "Los datos del mapa aún no están decodificados",
+      backToChalices: "Volver a Cálices"
     }
   };
 
@@ -185,6 +213,16 @@
     }).format(date);
   }
 
+  function chaliceDate(isoTimestamp) {
+    if (!isoTimestamp) return t("unknown");
+    const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(isoTimestamp) ? isoTimestamp : `${isoTimestamp}Z`;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return isoTimestamp;
+    return new Intl.DateTimeFormat(state.language === "es" ? "es-ES" : "en-US", {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+    }).format(date);
+  }
+
   function avatar(player, large = false) {
     const wrapper = node("span", `avatar${large ? " large" : ""}`);
     const initial = Array.from(player.username || "?")[0]?.toUpperCase() || "?";
@@ -216,6 +254,52 @@
     main.append(meta);
     link.append(main);
     return link;
+  }
+
+  function creatorBlock(creator) {
+    if (!creator || creator.kind !== "local" || !creator.username) {
+      return node("span", "chalice-creator imported", t("imported"));
+    }
+    const link = node("a", "chalice-creator");
+    link.href = creator.profileUrl || `/player/${encodeURIComponent(creator.username)}`;
+    link.append(avatar(creator), node("span", "creator-name", creator.username));
+    return link;
+  }
+
+  function privacyText(level) {
+    return t(Number(level) === 2 ? "open" : Number(level) === 1 ? "closed" : "unshared");
+  }
+
+  async function copyGlyph(glyph, button) {
+    try {
+      await navigator.clipboard.writeText(glyph);
+    } catch (_) {
+      const input = document.createElement("textarea");
+      input.value = glyph;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.append(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    if (button) {
+      const original = button.textContent;
+      button.textContent = t("copied");
+      setTimeout(() => { if (button.isConnected) button.textContent = original; }, 1200);
+    }
+  }
+
+  function glyphButton(glyph, compact = false) {
+    const button = node("button", `button quiet glyph-copy${compact ? " compact" : ""}`, t("copyGlyph"));
+    button.type = "button";
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      copyGlyph(glyph, button);
+    });
+    return button;
   }
 
   function setPage(markupClass = "page inner-page") {
@@ -329,6 +413,157 @@
     };
     form.addEventListener("submit", (event) => { event.preventDefault(); load().catch(showError); });
     await load();
+  }
+
+  async function renderChalices() {
+    const page = setPage("page inner-page chalice-page");
+    titleBlock(page, "chalicesTitle", "chalicesLead");
+    const current = new URLSearchParams(location.search);
+    const form = node("form", "chalice-filters");
+
+    const glyphField = node("label", "filter-field");
+    glyphField.append(node("span", "", t("exactGlyph")));
+    const glyph = document.createElement("input");
+    glyph.type = "search";
+    glyph.name = "glyph";
+    glyph.maxLength = 8;
+    glyph.pattern = "[2-9a-km-np-z]{4,8}";
+    glyph.value = current.get("glyph") || "";
+    glyph.placeholder = "n2vskrmr";
+    glyphField.append(glyph);
+
+    const depthField = node("label", "filter-field");
+    depthField.append(node("span", "", t("depth")));
+    const depth = document.createElement("select");
+    depth.name = "depth";
+    depth.append(new Option(t("allDepths"), ""));
+    for (let value = 1; value <= 5; value += 1) depth.append(new Option(String(value), String(value)));
+    depth.value = current.get("depth") || "";
+    depthField.append(depth);
+
+    const typeField = node("label", "filter-field");
+    typeField.append(node("span", "", t("typeId")));
+    const type = document.createElement("input");
+    type.type = "number";
+    type.name = "type";
+    type.min = "0";
+    type.value = current.get("type") || "";
+    typeField.append(type);
+
+    const ritesField = node("label", "filter-field");
+    ritesField.append(node("span", "", t("ritesId")));
+    const rites = document.createElement("input");
+    rites.type = "number";
+    rites.name = "rites";
+    rites.min = "0";
+    rites.value = current.get("rites") || "";
+    ritesField.append(rites);
+
+    const actions = node("div", "filter-actions");
+    const apply = node("button", "button primary", t("filters"));
+    apply.type = "submit";
+    const clear = node("a", "button quiet", t("clear"));
+    clear.href = "/chalice";
+    actions.append(apply, clear);
+    form.append(glyphField, depthField, typeField, ritesField, actions);
+    page.append(form);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const query = new URLSearchParams();
+      new FormData(form).forEach((value, key) => {
+        if (String(value).trim()) query.set(key, String(value).trim().toLowerCase());
+      });
+      history.pushState({}, "", `/chalice${query.size ? `?${query}` : ""}`);
+      renderRoute();
+    });
+
+    current.set("limit", "24");
+    const result = await api(`/api/chalices?${current}`);
+    const summary = node("div", "chalice-summary");
+    summary.append(node("span", "", t("storedChalices")),
+      node("strong", "", formatNumber(result.storedTotal)));
+    page.append(summary);
+
+    const table = node("section", "chalice-table");
+    const header = node("div", "chalice-row chalice-head");
+    ["glyph", "depth", "creator", "privacy"].forEach((key) => header.append(node("span", "", t(key))));
+    table.append(header);
+    if (!result.chalices.length) table.append(node("div", "empty-state", t("noChalices")));
+    result.chalices.forEach((chalice) => {
+      const row = node("article", "chalice-row");
+      const glyphCell = node("div", "chalice-glyph-cell");
+      const link = node("a", "glyph-link", chalice.glyph);
+      link.href = `/chalice/${encodeURIComponent(chalice.glyph)}`;
+      glyphCell.append(link, glyphButton(chalice.glyph, true));
+      row.append(glyphCell, node("span", "chalice-depth", String(chalice.ritualLevel)),
+        creatorBlock(chalice.creator), node("span", "privacy-badge", privacyText(chalice.shareLevel)));
+      table.append(row);
+    });
+    page.append(table);
+
+    if (result.pages > 1) {
+      const pagination = node("nav", "pagination");
+      const pageLink = (label, target, disabled) => {
+        const link = node("a", `button quiet${disabled ? " disabled" : ""}`, label);
+        if (!disabled) {
+          const query = new URLSearchParams(location.search);
+          query.set("page", String(target));
+          link.href = `/chalice?${query}`;
+        }
+        return link;
+      };
+      pagination.append(pageLink(t("previous"), result.page - 1, result.page <= 1),
+        node("span", "", t("pageOf", { page: result.page, pages: result.pages })),
+        pageLink(t("next"), result.page + 1, result.page >= result.pages));
+      page.append(pagination);
+    }
+  }
+
+  async function renderChaliceDetail(glyph) {
+    const chalice = await api(`/api/chalices/${encodeURIComponent(glyph.toLowerCase())}`);
+    const page = setPage("page inner-page chalice-detail-page");
+    const back = node("a", "text-link chalice-back", `← ${t("backToChalices")}`);
+    back.href = "/chalice";
+    page.append(back);
+
+    const hero = node("section", "chalice-hero");
+    const identity = node("div");
+    identity.append(node("p", "eyebrow", t("chaliceDetails")),
+      node("h1", "chalice-glyph", chalice.glyph));
+    const heroActions = node("div", "chalice-hero-actions");
+    heroActions.append(glyphButton(chalice.glyph));
+    hero.append(identity, heroActions);
+    page.append(hero);
+
+    const creatorSection = node("section", "detail-section chalice-creator-section");
+    creatorSection.append(node("h2", "", t("creator")), creatorBlock(chalice.creator));
+    page.append(creatorSection);
+
+    const details = node("section", "detail-grid chalice-detail-grid");
+    const identityPanel = node("article", "detail-section");
+    identityPanel.append(node("h2", "", t("overview")), metricList([
+      ["channelId", formatNumber(chalice.channelId)], ["depth", formatNumber(chalice.ritualLevel)],
+      ["fixedOrGeneral", formatNumber(chalice.fixedOrGeneral)],
+      ["typeId", formatNumber(chalice.holyGrailTypeId)]
+    ]));
+    const statePanel = node("article", "detail-section");
+    statePanel.append(node("h2", "", t("status")), metricList([
+      ["privacy", privacyText(chalice.shareLevel)], ["status", formatNumber(chalice.status)],
+      ["subFeatureFlag", formatNumber(chalice.subFeatureFlag)],
+      ["formDataVersion", formatNumber(chalice.formDataVersion)]
+    ]));
+    const datesPanel = node("article", "detail-section");
+    datesPanel.append(node("h2", "", t("lastPlayed")), metricList([
+      ["created", chaliceDate(chalice.createdAt)], ["lastPlayed", chaliceDate(chalice.lastPlayDate)],
+      ["formDataBytes", `${formatNumber(chalice.formDataBytes)} ${t("bytes")}`]
+    ]));
+    details.append(identityPanel, statePanel, datesPanel);
+    page.append(details);
+
+    const map = node("section", "dungeon-map-placeholder");
+    map.append(node("h2", "", t("dungeonMap")), node("div", "map-sigil", "◇"),
+      node("p", "", t("mapPending")));
+    page.append(map);
   }
 
   function stopChatPolling() {
@@ -655,11 +890,15 @@
       const path = location.pathname;
       document.querySelectorAll(".site-nav a").forEach((link) => {
         const href = link.getAttribute("href");
-        link.toggleAttribute("aria-current", href === path || (href === "/players" && path.startsWith("/player/")));
+        link.toggleAttribute("aria-current", href === path ||
+          (href === "/players" && path.startsWith("/player/")) ||
+          (href === "/chalice" && path.startsWith("/chalice/")));
       });
       if (path === "/") await renderHome();
       else if (path === "/players") await renderPlayers();
       else if (path.startsWith("/player/")) await renderProfile(decodeURIComponent(path.slice(8)));
+      else if (path === "/chalice") await renderChalices();
+      else if (path.startsWith("/chalice/")) await renderChaliceDetail(decodeURIComponent(path.slice(9)));
       else if (path === "/register") await renderRegister();
       else if (path === "/login") await renderLogin();
       else if (path === "/account") await renderAccount();

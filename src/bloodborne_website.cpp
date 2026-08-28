@@ -52,6 +52,7 @@ constexpr qsizetype MaxJsonBody = 16 * 1024;
 constexpr qsizetype MaxAvatarBody = 2 * 1024 * 1024;
 constexpr qint64 WebSessionLifetimeSeconds = 7 * 24 * 60 * 60;
 constexpr int MaxPlayersPerPage = 100;
+constexpr int MaxChalicesPerPage = 100;
 
 StatusCode Status(int code) {
     return static_cast<StatusCode>(code);
@@ -416,6 +417,9 @@ private:
         m_http->route(QStringLiteral("/players"), QHttpServerRequest::Method::Get, shell);
         m_http->route(QStringLiteral("/account"), QHttpServerRequest::Method::Get, shell);
         m_http->route(QStringLiteral("/communion"), QHttpServerRequest::Method::Get, shell);
+        m_http->route(QStringLiteral("/chalice"), QHttpServerRequest::Method::Get, shell);
+        m_http->route(QStringLiteral("/chalice/<arg>"), QHttpServerRequest::Method::Get,
+                      [this](const QString&, const QHttpServerRequest&) { return StaticShell(); });
         m_http->route(QStringLiteral("/player/<arg>"), QHttpServerRequest::Method::Get,
                       [this](const QString&, const QHttpServerRequest&) { return StaticShell(); });
 
@@ -455,6 +459,15 @@ private:
                       });
         m_http->route(QStringLiteral("/api/activity"), QHttpServerRequest::Method::Get,
                       [this](const QHttpServerRequest& request) { return ApiActivity(request); });
+        m_http->route(QStringLiteral("/api/chalices"), QHttpServerRequest::Method::Get,
+                      [this](const QHttpServerRequest& request) { return ApiChalices(request); });
+        m_http->route(QStringLiteral("/api/chalices/<arg>/map"), QHttpServerRequest::Method::Get,
+                      [this](const QString& glyph, const QHttpServerRequest&) {
+                          return ApiChaliceMap(glyph);
+                      });
+        m_http->route(
+            QStringLiteral("/api/chalices/<arg>"), QHttpServerRequest::Method::Get,
+            [this](const QString& glyph, const QHttpServerRequest&) { return ApiChalice(glyph); });
         m_http->route(QStringLiteral("/api/register"), QHttpServerRequest::Method::Post,
                       [this](const QHttpServerRequest& request) { return ApiRegister(request); });
         m_http->route(QStringLiteral("/api/login"), QHttpServerRequest::Method::Post,
@@ -689,6 +702,210 @@ private:
                     m_config->IsBloodborneWebsiteRegistrationEnabled());
         data.insert(QStringLiteral("chatEnabled"), m_config->IsBloodborneWebsiteChatEnabled());
         data.insert(QStringLiteral("definitions"), definitions);
+        return JsonData(data);
+    }
+
+    static bool ValidGlyph(const QString& glyph) {
+        static const QRegularExpression Pattern(QStringLiteral("^[2-9a-km-np-z]{4,8}$"));
+        return Pattern.match(glyph).hasMatch();
+    }
+
+    QJsonObject ChaliceObject(const QSqlQuery& query) const {
+        const qint64 createUserId = query.value(13).toLongLong();
+        const QString username = query.value(14).toString();
+        const QString avatarFile = query.value(15).toString();
+
+        QJsonObject creator;
+        if (createUserId > 0 && !username.isEmpty()) {
+            creator.insert(QStringLiteral("kind"), QStringLiteral("local"));
+            creator.insert(QStringLiteral("userId"), createUserId);
+            creator.insert(QStringLiteral("username"), username);
+            creator.insert(QStringLiteral("profileUrl"),
+                           QStringLiteral("/player/") +
+                               QString::fromLatin1(QUrl::toPercentEncoding(username)));
+            creator.insert(QStringLiteral("avatarUrl"),
+                           ValidAvatarFile(avatarFile) ? QStringLiteral("/avatars/") + avatarFile
+                                                       : QString());
+        } else {
+            creator.insert(QStringLiteral("kind"), QStringLiteral("imported"));
+        }
+
+        QJsonObject chalice;
+        chalice.insert(QStringLiteral("channelId"), query.value(0).toLongLong());
+        chalice.insert(QStringLiteral("glyph"), query.value(1).toString());
+        chalice.insert(QStringLiteral("createdAt"), query.value(2).toString());
+        chalice.insert(QStringLiteral("lastPlayDate"), query.value(3).toString());
+        chalice.insert(QStringLiteral("fixedOrGeneral"), query.value(4).toInt());
+        chalice.insert(QStringLiteral("formDataVersion"), query.value(5).toInt());
+        chalice.insert(QStringLiteral("holyGrailTypeId"), query.value(6).toInt());
+        chalice.insert(QStringLiteral("ritualLevel"), query.value(7).toInt());
+        chalice.insert(QStringLiteral("shareLevel"), query.value(8).toInt());
+        chalice.insert(QStringLiteral("status"), query.value(9).toInt());
+        chalice.insert(QStringLiteral("subFeatureFlag"), query.value(10).toLongLong());
+        chalice.insert(QStringLiteral("turnoutLevel"), query.value(11).toInt());
+        chalice.insert(QStringLiteral("formDataBytes"), query.value(12).toLongLong());
+        chalice.insert(QStringLiteral("creator"), creator);
+        chalice.insert(QStringLiteral("mapAvailable"), !query.value(16).isNull());
+        return chalice;
+    }
+
+    static QString ChaliceSelect() {
+        return QStringLiteral(
+            "SELECT c.channel_id,c.discernment_word,c.create_date,c.last_play_date,"
+            "c.fixed_or_general,c.form_data_version,c.holy_grail_type_id,c.ritual_level,"
+            "c.share_level,c.status,c.sub_feature_flag,c.turnout_level,"
+            "length(CAST(c.form_data AS BLOB)),c.create_user_id,COALESCE(a.username,''),"
+            "COALESCE(p.avatar_file,''),c.map_data_json FROM bloodborne_chalice c "
+            "LEFT JOIN account a ON a.user_id=c.create_user_id "
+            "LEFT JOIN bloodborne_web_profile p ON p.user_id=c.create_user_id ");
+    }
+
+    QHttpServerResponse ApiChalices(const QHttpServerRequest& request) const {
+        const QUrlQuery queryItems(request.url());
+        const QString glyph =
+            queryItems.queryItemValue(QStringLiteral("glyph")).trimmed().toLower();
+        if (!glyph.isEmpty() && !ValidGlyph(glyph))
+            return JsonError(Status(400), QStringLiteral("invalid_glyph"),
+                             QStringLiteral("Invalid Chalice glyph"));
+
+        const auto optionalNumber = [&queryItems](const QString& name, int minimum,
+                                                  int maximum) -> std::optional<int> {
+            if (!queryItems.hasQueryItem(name))
+                return std::nullopt;
+            bool ok = false;
+            const int number = queryItems.queryItemValue(name).toInt(&ok);
+            if (!ok || number < minimum || number > maximum)
+                return std::optional<int>{-1};
+            return number;
+        };
+        const auto depth = optionalNumber(QStringLiteral("depth"), 0, 0x7FFFFFFF);
+        const auto type = optionalNumber(QStringLiteral("type"), 0, 0x7FFFFFFF);
+        const auto rites = optionalNumber(QStringLiteral("rites"), 0, 0x7FFFFFFF);
+        if ((depth && *depth < 0) || (type && *type < 0) || (rites && *rites < 0))
+            return JsonError(Status(400), QStringLiteral("invalid_filter"),
+                             QStringLiteral("Invalid Chalice filter"));
+
+        bool pageOk = false;
+        int page = queryItems.queryItemValue(QStringLiteral("page")).toInt(&pageOk);
+        if (!pageOk)
+            page = 1;
+        bool limitOk = false;
+        int limit = queryItems.queryItemValue(QStringLiteral("limit")).toInt(&limitOk);
+        if (!limitOk)
+            limit = 24;
+        if (page < 1 || limit < 1 || limit > MaxChalicesPerPage)
+            return JsonError(Status(400), QStringLiteral("invalid_pagination"),
+                             QStringLiteral("Invalid Chalice pagination"));
+
+        QStringList conditions{QStringLiteral("c.origin='community'"),
+                               QStringLiteral("c.share_level=2")};
+        QList<QVariant> bindings;
+        if (!glyph.isEmpty()) {
+            conditions.append(QStringLiteral("c.discernment_word=?"));
+            bindings.append(glyph);
+        }
+        if (depth) {
+            conditions.append(QStringLiteral("c.ritual_level=?"));
+            bindings.append(*depth);
+        }
+        if (type) {
+            conditions.append(QStringLiteral("c.holy_grail_type_id=?"));
+            bindings.append(*type);
+        }
+        if (rites) {
+            conditions.append(QStringLiteral("c.sub_feature_flag=?"));
+            bindings.append(*rites);
+        }
+        const QString creator = queryItems.queryItemValue(QStringLiteral("creator")).trimmed();
+        if (!creator.isEmpty()) {
+            if (creator.size() > 64)
+                return JsonError(Status(400), QStringLiteral("invalid_creator"),
+                                 QStringLiteral("Invalid Chalice creator"));
+            conditions.append(QStringLiteral("a.username=? COLLATE NOCASE"));
+            bindings.append(creator);
+        }
+
+        const QString where = conditions.join(QStringLiteral(" AND "));
+        QSqlQuery count(m_db->Conn());
+        count.prepare(QStringLiteral("SELECT COUNT(*) FROM bloodborne_chalice c "
+                                     "LEFT JOIN account a ON a.user_id=c.create_user_id WHERE ") +
+                      where);
+        for (const QVariant& binding : bindings)
+            count.addBindValue(binding);
+        if (!count.exec() || !count.next())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to count Chalices"));
+        const qint64 total = count.value(0).toLongLong();
+        qint64 storedTotal = 0;
+        QSqlQuery storedCount(m_db->Conn());
+        if (storedCount.exec(QStringLiteral(
+                "SELECT COUNT(*) FROM bloodborne_chalice WHERE origin='community'")) &&
+            storedCount.next()) {
+            storedTotal = storedCount.value(0).toLongLong();
+        } else {
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to count stored Chalices"));
+        }
+
+        QSqlQuery query(m_db->Conn());
+        query.prepare(ChaliceSelect() + QStringLiteral("WHERE ") + where +
+                      QStringLiteral(" ORDER BY c.last_play_date DESC,c.channel_id DESC LIMIT ? "
+                                     "OFFSET ?"));
+        for (const QVariant& binding : bindings)
+            query.addBindValue(binding);
+        query.addBindValue(limit);
+        query.addBindValue(static_cast<qint64>(page - 1) * limit);
+        if (!query.exec())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to list Chalices"));
+
+        QJsonArray chalices;
+        while (query.next())
+            chalices.append(ChaliceObject(query));
+        QJsonObject data;
+        data.insert(QStringLiteral("chalices"), chalices);
+        data.insert(QStringLiteral("total"), total);
+        data.insert(QStringLiteral("storedTotal"), storedTotal);
+        data.insert(QStringLiteral("page"), page);
+        data.insert(QStringLiteral("limit"), limit);
+        data.insert(QStringLiteral("pages"),
+                    total == 0 ? 0 : static_cast<qint64>((total + limit - 1) / limit));
+        return JsonData(data);
+    }
+
+    QHttpServerResponse ApiChalice(const QString& rawGlyph) const {
+        const QString glyph = rawGlyph.trimmed().toLower();
+        if (!ValidGlyph(glyph))
+            return JsonError(Status(404), QStringLiteral("chalice_not_found"),
+                             QStringLiteral("Chalice not found"));
+        QSqlQuery query(m_db->Conn());
+        query.prepare(ChaliceSelect() +
+                      QStringLiteral("WHERE c.discernment_word=? AND c.origin='community' "
+                                     "AND c.share_level=2 LIMIT 1"));
+        query.addBindValue(glyph);
+        if (!query.exec() || !query.next())
+            return JsonError(Status(404), QStringLiteral("chalice_not_found"),
+                             QStringLiteral("Chalice not found"));
+        return JsonData(ChaliceObject(query));
+    }
+
+    QHttpServerResponse ApiChaliceMap(const QString& rawGlyph) const {
+        const QString glyph = rawGlyph.trimmed().toLower();
+        if (!ValidGlyph(glyph))
+            return JsonError(Status(404), QStringLiteral("chalice_not_found"),
+                             QStringLiteral("Chalice not found"));
+        QSqlQuery query(m_db->Conn());
+        query.prepare(
+            QStringLiteral("SELECT map_data_json FROM bloodborne_chalice WHERE discernment_word=? "
+                           "AND origin='community' AND share_level=2 LIMIT 1"));
+        query.addBindValue(glyph);
+        if (!query.exec() || !query.next())
+            return JsonError(Status(404), QStringLiteral("chalice_not_found"),
+                             QStringLiteral("Chalice not found"));
+        QJsonObject data;
+        data.insert(QStringLiteral("glyph"), glyph);
+        data.insert(QStringLiteral("status"), QStringLiteral("not_decoded"));
+        data.insert(QStringLiteral("layout"), QJsonValue());
         return JsonData(data);
     }
 
