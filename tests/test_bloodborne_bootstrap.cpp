@@ -537,7 +537,7 @@ int main(int argc, char *argv[]) {
             "\"ResKind\":0}"));
 
   // Reproduce the exact fixed-ritual client order seen in the failing altar
-  // trace: move-count success, captured fixed ChannelSearch, then details/info.
+  // trace: move-count success, captured fixed ChannelSearch, then info/details.
   CHECK(IsSuccessful(
       Post(tcp,
            QStringLiteral(
@@ -568,22 +568,6 @@ int main(int argc, char *argv[]) {
             BloodborneTestFixtures::OfficialFixedChalices.back().formData));
 
   const QJsonArray fixedIdList{QJsonObject{{QStringLiteral("ChannelId"), 10}}};
-  QJsonObject fixedDetails = SessionRequest(
-      QStringLiteral("ChannelGetDetailsInfoRequest"), 1, sessionId);
-  fixedDetails.insert(QStringLiteral("ChannelIdList"), fixedIdList);
-  const HttpResult fixedDetailsResult = Post(
-      tcp, QStringLiteral("/channel/get_details_info?user_id=1"), fixedDetails);
-  CHECK(IsSuccessful(fixedDetailsResult,
-                     QStringLiteral("ChannelGetDetailsInfoResponse")));
-  CHECK(Object(fixedDetailsResult)
-            .value(QStringLiteral("ChannelList"))
-            .toArray()
-            .size() == 1);
-  CHECK(Object(fixedDetailsResult)
-            .value(QStringLiteral("LostChannelIdList"))
-            .toArray()
-            .isEmpty());
-
   QJsonObject fixedInfo =
       SessionRequest(QStringLiteral("ChannelGetInfoRequest"), 1, sessionId);
   fixedInfo.insert(QStringLiteral("ChannelIdList"), fixedIdList);
@@ -596,6 +580,22 @@ int main(int argc, char *argv[]) {
             .toArray()
             .size() == 1);
   CHECK(Object(fixedInfoResult)
+            .value(QStringLiteral("LostChannelIdList"))
+            .toArray()
+            .isEmpty());
+
+  QJsonObject fixedDetails = SessionRequest(
+      QStringLiteral("ChannelGetDetailsInfoRequest"), 1, sessionId);
+  fixedDetails.insert(QStringLiteral("ChannelIdList"), fixedIdList);
+  const HttpResult fixedDetailsResult = Post(
+      tcp, QStringLiteral("/channel/get_details_info?user_id=1"), fixedDetails);
+  CHECK(IsSuccessful(fixedDetailsResult,
+                     QStringLiteral("ChannelGetDetailsInfoResponse")));
+  CHECK(Object(fixedDetailsResult)
+            .value(QStringLiteral("ChannelList"))
+            .toArray()
+            .size() == 1);
+  CHECK(Object(fixedDetailsResult)
             .value(QStringLiteral("LostChannelIdList"))
             .toArray()
             .isEmpty());
