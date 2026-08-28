@@ -150,6 +150,11 @@ int main(int argc, char *argv[]) {
 
   QJsonObject nullableSearch =
       BloodborneTestFixtures::OfficialNullableChannelSearchRequest();
+  // Keep the captured nullable optionals while selecting the FixedOrGeneral
+  // value of the synthetic uploaded record used by this test.
+  nullableSearch.insert(
+      QStringLiteral("FixedOrGeneralList"),
+      QJsonArray{QJsonObject{{QStringLiteral("FixedOrGeneral"), 1}}});
   nullableSearch.insert(QStringLiteral("GetCount"), 1);
   const Bloodborne::OnlineResult oneResult =
       service.Search(2880, nullableSearch);
