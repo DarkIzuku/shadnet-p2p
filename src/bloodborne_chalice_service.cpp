@@ -158,7 +158,7 @@ std::optional<QJsonObject> ChannelObject(const QSqlQuery& query) {
     channel.insert(QStringLiteral("RitualLevel"), query.value(10).toInt());
     channel.insert(QStringLiteral("ShareLevel"), query.value(11).toInt());
     channel.insert(QStringLiteral("Status"), query.value(12).toInt());
-    channel.insert(QStringLiteral("SubFeatureFlag"), query.value(13).toVariant().toLongLong());
+    channel.insert(QStringLiteral("SubFeatureFlag"), query.value(13).toLongLong());
     channel.insert(QStringLiteral("TurnoutLevel"), query.value(14).toInt());
     channel.insert(QStringLiteral("UnlockFlagList"), *unlockFlags);
     channel.insert(QStringLiteral("WishMaterialList"), *wishMaterials);

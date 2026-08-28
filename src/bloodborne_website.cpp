@@ -741,7 +741,7 @@ private:
         chalice.insert(QStringLiteral("ritualLevel"), query.value(7).toInt());
         chalice.insert(QStringLiteral("shareLevel"), query.value(8).toInt());
         chalice.insert(QStringLiteral("status"), query.value(9).toInt());
-        chalice.insert(QStringLiteral("subFeatureFlag"), query.value(10).toVariant().toLongLong());
+        chalice.insert(QStringLiteral("subFeatureFlag"), query.value(10).toLongLong());
         chalice.insert(QStringLiteral("turnoutLevel"), query.value(11).toInt());
         chalice.insert(QStringLiteral("formDataBytes"), query.value(12).toLongLong());
         chalice.insert(QStringLiteral("creator"), creator);
