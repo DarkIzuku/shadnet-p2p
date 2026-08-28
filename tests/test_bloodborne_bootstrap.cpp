@@ -419,6 +419,15 @@ int main(int argc, char *argv[]) {
            QStringLiteral("/penalty/check_user_priority_move_count?user_id=1"),
            penalty),
       QStringLiteral("UserPropertiesMoveCountCheckResponse")));
+  QJsonObject penaltyNotify = SessionRequest(
+      QStringLiteral("UserPropertiesMoveCountRequest"), 1, sessionId);
+  penaltyNotify.insert(QStringLiteral("Count"), 2);
+  CHECK(IsSuccessful(
+      Post(tcp,
+           QStringLiteral(
+               "/penalty/notify_user_properties_move_count?user_id=1"),
+           penaltyNotify),
+      QStringLiteral("UserPropertiesMoveCountResponse")));
 
   QJsonObject search =
       SessionRequest(QStringLiteral("BloodMessSearchAddRequest"), 1, sessionId);
@@ -533,6 +542,143 @@ int main(int argc, char *argv[]) {
   CHECK(IsSuccessful(Post(tcp, QStringLiteral("/channel/get_info"), channel),
                      QStringLiteral("ChannelGetInfoResponse"),
                      {"ChannelInfoList", "LostChannelIdList"}));
+
+  QJsonObject channelUpload =
+      BloodborneTestFixtures::OfficialChannelUploadRequest();
+  channelUpload.insert(QStringLiteral("UserId"), 1);
+  channelUpload.insert(QStringLiteral("SessionId"), sessionId);
+  const HttpResult channelUploadResult =
+      Send(ServerUrl(tcp, QStringLiteral("/channel/upload?user_id=1")), "POST",
+           QJsonDocument(channelUpload).toJson(QJsonDocument::Compact),
+           "text/plain");
+  CHECK(IsSuccessful(channelUploadResult,
+                     QStringLiteral("ChannelUploadResponse")));
+  const qint64 channelId = Object(channelUploadResult)
+                               .value(QStringLiteral("ChannelId"))
+                               .toInteger();
+  const QString glyph = Object(channelUploadResult)
+                            .value(QStringLiteral("DiscernmentWord"))
+                            .toString();
+  CHECK(channelId > 0);
+  CHECK(glyph.size() == 8);
+
+  QJsonObject channelWord =
+      SessionRequest(QStringLiteral("ChannelWordSearchRequest"), 1, sessionId);
+  channelWord.insert(QStringLiteral("FormDataVersion"), 0);
+  channelWord.insert(QStringLiteral("SearchWord"), glyph);
+  channelWord.insert(
+      QStringLiteral("UnlockedFlagList"),
+      QJsonArray{QJsonObject{{QStringLiteral("UnlockedFlag"), 260}},
+                 QJsonObject{{QStringLiteral("UnlockedFlag"), 278970752}},
+                 QJsonObject{{QStringLiteral("UnlockedFlag"), 3491807617.0}}});
+  const HttpResult unsharedWordResult =
+      Post(tcp, QStringLiteral("/channel/word_search?user_id=1"), channelWord);
+  CHECK(IsSuccessful(unsharedWordResult,
+                     QStringLiteral("ChannelWordSearchResponse")));
+  CHECK(!Object(unsharedWordResult).contains(QStringLiteral("ChannelId")));
+
+  QJsonObject channelDetails = SessionRequest(
+      QStringLiteral("ChannelGetDetailsInfoRequest"), 1, sessionId);
+  channelDetails.insert(
+      QStringLiteral("ChannelIdList"),
+      QJsonArray{QJsonObject{{QStringLiteral("ChannelId"), channelId}},
+                 QJsonObject{{QStringLiteral("ChannelId"), 9'999'999}}});
+  const HttpResult channelDetailsResult =
+      Post(tcp, QStringLiteral("/channel/get_details_info?user_id=1"),
+           channelDetails);
+  CHECK(IsSuccessful(channelDetailsResult,
+                     QStringLiteral("ChannelGetDetailsInfoResponse")));
+  CHECK(Object(channelDetailsResult)
+            .value(QStringLiteral("ChannelList"))
+            .toArray()
+            .size() == 1);
+  CHECK(Object(channelDetailsResult)
+            .value(QStringLiteral("LostChannelIdList"))
+            .toArray()
+            .size() == 1);
+
+  channel.insert(QStringLiteral("ChannelIdList"),
+                 channelDetails.value(QStringLiteral("ChannelIdList")));
+  const QJsonObject channelInfo =
+      Object(Post(tcp, QStringLiteral("/channel/get_info?user_id=1"), channel));
+  CHECK(channelInfo.value(QStringLiteral("ChannelInfoList")).toArray().size() ==
+        1);
+  CHECK(
+      channelInfo.value(QStringLiteral("LostChannelIdList")).toArray().size() ==
+      1);
+
+  QJsonObject channelShare =
+      SessionRequest(QStringLiteral("ChannelShareRequest"), 1, sessionId);
+  channelShare.insert(QStringLiteral("ChannelId"), channelId);
+  channelShare.insert(QStringLiteral("CharaId"),
+                      channelUpload.value(QStringLiteral("CharaId")));
+  channelShare.insert(QStringLiteral("ShareLevel"), 2);
+  CHECK(IsSuccessful(
+      Post(tcp, QStringLiteral("/channel/share?user_id=1"), channelShare),
+      QStringLiteral("ChannelShareResponse")));
+  const HttpResult sharedWordResult =
+      Post(tcp, QStringLiteral("/channel/word_search?user_id=1"), channelWord);
+  CHECK(IsSuccessful(sharedWordResult,
+                     QStringLiteral("ChannelWordSearchResponse")));
+  CHECK(
+      Object(sharedWordResult).value(QStringLiteral("ChannelId")).toInteger() ==
+      channelId);
+
+  QJsonObject channelSearch =
+      BloodborneTestFixtures::OfficialNullableChannelSearchRequest();
+  channelSearch.insert(QStringLiteral("UserId"), 1);
+  channelSearch.insert(QStringLiteral("SessionId"), sessionId);
+  channelSearch.insert(
+      QStringLiteral("FixedOrGeneralList"),
+      QJsonArray{QJsonObject{{QStringLiteral("FixedOrGeneral"), 1}}});
+  channelSearch.insert(QStringLiteral("GetCount"), 5);
+  const HttpResult channelSearchResult =
+      Post(tcp, QStringLiteral("/channel/search?user_id=1"), channelSearch);
+  CHECK(IsSuccessful(channelSearchResult,
+                     QStringLiteral("ChannelSearchResponse")));
+  CHECK(Object(channelSearchResult)
+            .value(QStringLiteral("ChannelList"))
+            .toArray()
+            .size() == 1);
+
+  QJsonObject randomJoin =
+      BloodborneTestFixtures::OfficialChannelRandomJoinRequest();
+  randomJoin.insert(QStringLiteral("UserId"), 1);
+  randomJoin.insert(QStringLiteral("SessionId"), sessionId);
+  randomJoin.insert(
+      QStringLiteral("RandomJoinTargetList"),
+      QJsonArray{QJsonObject{{QStringLiteral("HolyGrailTypeId"), 0},
+                             {QStringLiteral("RitualLevel"), 1}}});
+  const HttpResult randomJoinResult =
+      Post(tcp, QStringLiteral("/channel/random_join?user_id=1"), randomJoin);
+  CHECK(IsSuccessful(randomJoinResult,
+                     QStringLiteral("ChannelRandomJoinResponse")));
+  CHECK(
+      Object(randomJoinResult).value(QStringLiteral("ChannelId")).toInteger() ==
+      channelId);
+
+  channelShare.insert(QStringLiteral("ChannelId"), 8'888'888);
+  CHECK(IsSuccessful(
+      Post(tcp, QStringLiteral("/channel/share?user_id=1"), channelShare),
+      QStringLiteral("ChannelShareResponse")));
+  QSqlQuery noSyntheticChalice(db.Conn());
+  CHECK(noSyntheticChalice.exec(QStringLiteral(
+      "SELECT COUNT(*) FROM bloodborne_chalice WHERE channel_id=8888888")));
+  CHECK(noSyntheticChalice.next());
+  CHECK(noSyntheticChalice.value(0).toInt() == 0);
+
+  QJsonObject pendingMaterial =
+      SessionRequest(QStringLiteral("ChannelAddMaterialRequest"), 1, sessionId);
+  pendingMaterial.insert(QStringLiteral("ChannelId"), channelId);
+  CHECK(Post(tcp, QStringLiteral("/channel/add_material?user_id=1"),
+             pendingMaterial)
+            .status == 501);
+  pendingMaterial.insert(QStringLiteral("MessageId"),
+                         QStringLiteral("ChannelAddMaterialCompleteNotify"));
+  CHECK(Post(tcp,
+             QStringLiteral("/channel/notify_add_material_complete?user_id=1"),
+             pendingMaterial)
+            .status == 501);
 
   QJsonObject evaluation = SessionRequest(
       QStringLiteral("BloodMessGetEvaluateRequest"), 1, sessionId);

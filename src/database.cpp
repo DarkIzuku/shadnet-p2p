@@ -372,6 +372,49 @@ bool Database::Migrate() {
     if (!Exec(ins6))
         return false;
 
+    const QStringList stmts7 = {
+        "CREATE TABLE IF NOT EXISTS bloodborne_chalice("
+        "  channel_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  discernment_word TEXT NOT NULL COLLATE BINARY UNIQUE,"
+        "  create_user_id INTEGER NOT NULL,"
+        // Bloodborne sends unsigned JSON numbers that can exceed INT64_MAX. Store their
+        // decimal representation instead of coercing them into a signed SQLite INTEGER.
+        "  create_chara_id TEXT NOT NULL,"
+        "  create_date TEXT NOT NULL,"
+        "  last_play_date TEXT NOT NULL,"
+        "  fixed_or_general INTEGER NOT NULL,"
+        "  form_data TEXT NOT NULL,"
+        "  form_data_version INTEGER NOT NULL,"
+        "  holy_grail_type_id INTEGER NOT NULL,"
+        "  ritual_level INTEGER NOT NULL,"
+        "  share_level INTEGER NOT NULL CHECK(share_level IN (0,1,2)),"
+        "  status INTEGER NOT NULL,"
+        "  sub_feature_flag INTEGER NOT NULL,"
+        "  turnout_level INTEGER NOT NULL DEFAULT 0,"
+        "  unlock_flag_list TEXT NOT NULL,"
+        "  wish_material_list TEXT NOT NULL,"
+        "  random_join_count INTEGER NOT NULL DEFAULT 0,"
+        // Reserved for a future decoded SVG/Canvas layout. Raw maps are never stored as PNG.
+        "  map_data_json TEXT)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS bloodborne_chalice_glyph "
+        "ON bloodborne_chalice(discernment_word COLLATE BINARY)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_chalice_public_search "
+        "ON bloodborne_chalice(share_level,status,form_data_version,fixed_or_general,"
+        "holy_grail_type_id,ritual_level,sub_feature_flag,random_join_count,last_play_date)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_chalice_creator "
+        "ON bloodborne_chalice(create_user_id,channel_id DESC)",
+    };
+
+    for (const QString& statement : stmts7) {
+        if (!Exec(statement))
+            return false;
+    }
+
+    QSqlQuery ins7(m_db);
+    ins7.prepare("INSERT OR IGNORE INTO migration VALUES(7,'Bloodborne Chalice Dungeons')");
+    if (!Exec(ins7))
+        return false;
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();

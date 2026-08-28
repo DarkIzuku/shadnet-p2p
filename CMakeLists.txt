@@ -95,6 +95,8 @@ set(SOURCES
     src/bloodborne_bootstrap.cpp
     src/bloodborne_online_service.h
     src/bloodborne_online_service.cpp
+    src/bloodborne_chalice_service.h
+    src/bloodborne_chalice_service.cpp
     src/bloodborne_ssinfo_reference.h
     src/bloodborne_ssinfo_reference.cpp
     src/bloodborne_reference_proxy.h
@@ -140,6 +142,7 @@ if(BUILD_TESTING)
         tests/test_bloodborne_bootstrap.cpp
         src/bloodborne_bootstrap.cpp
         src/bloodborne_online_service.cpp
+        src/bloodborne_chalice_service.cpp
         src/bloodborne_ssinfo_reference.cpp
         src/bloodborne_summon_broker.cpp
         src/config.cpp
@@ -170,6 +173,15 @@ if(BUILD_TESTING)
     target_include_directories(test_bloodborne_online_service PRIVATE src)
     target_link_libraries(test_bloodborne_online_service PRIVATE Qt6::Core Qt6::Sql)
     add_test(NAME bloodborne_online_service COMMAND test_bloodborne_online_service)
+
+    add_executable(test_bloodborne_chalice_service EXCLUDE_FROM_ALL
+        tests/test_bloodborne_chalice_service.cpp
+        src/bloodborne_chalice_service.cpp
+        src/database.cpp
+    )
+    target_include_directories(test_bloodborne_chalice_service PRIVATE src tests)
+    target_link_libraries(test_bloodborne_chalice_service PRIVATE Qt6::Core Qt6::Sql)
+    add_test(NAME bloodborne_chalice_service COMMAND test_bloodborne_chalice_service)
 
     add_executable(test_bloodborne_reference_proxy EXCLUDE_FROM_ALL
         tests/test_bloodborne_reference_proxy.cpp

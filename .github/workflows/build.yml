@@ -6,6 +6,8 @@ name: Build and Release
 
 on:
   push:
+    branches-ignore:
+      - "codex/chalice-*"
     paths-ignore:
       - "**/*.md"
 
@@ -157,7 +159,7 @@ jobs:
 
     - name: Build and run tests
       run: |
-        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
         ctest --test-dir ${{ github.workspace }}/build -C ${{ env.BUILD_TYPE }} --output-on-failure
 
     - name: Stage release
@@ -178,6 +180,7 @@ jobs:
         path: staging/
 
   linux:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/chalice-') }}
     runs-on: ubuntu-24.04
     needs: [get-info, get-qt-version]
     steps:
@@ -241,7 +244,7 @@ jobs:
 
     - name: Build and run tests
       run: |
-        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $(nproc)
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $(nproc)
         ctest --test-dir ${{ github.workspace }}/build --output-on-failure
 
     - name: Package

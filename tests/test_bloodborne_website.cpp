@@ -16,8 +16,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QSettings>
 #include <QSet>
+#include <QSettings>
 #include <QSqlQuery>
 #include <QStringList>
 #include <QTcpSocket>
@@ -270,10 +270,10 @@ int main(int argc, char *argv[]) {
            {{QStringLiteral("message"), QStringLiteral("hidden")}});
   CHECK(disabledChatWrite.status == 503);
   {
-    QSqlQuery disabledChatCount(QSqlDatabase::database(
-        QStringLiteral("bloodborne_website_main")));
-    CHECK(disabledChatCount.exec(QStringLiteral(
-        "SELECT COUNT(*) FROM bloodborne_web_chat_message")));
+    QSqlQuery disabledChatCount(
+        QSqlDatabase::database(QStringLiteral("bloodborne_website_main")));
+    CHECK(disabledChatCount.exec(
+        QStringLiteral("SELECT COUNT(*) FROM bloodborne_web_chat_message")));
     CHECK(disabledChatCount.next());
     CHECK(disabledChatCount.value(0).toInt() == 0);
   }
@@ -281,8 +281,8 @@ int main(int argc, char *argv[]) {
 
   const QString configPath = temporary.filePath(QStringLiteral("website.cfg"));
   WriteConfig(configPath, true, true, true,
-              QStringLiteral("website-assets-missing-for-tests"), true, 400,
-              3, 24);
+              QStringLiteral("website-assets-missing-for-tests"), true, 400, 3,
+              24);
   ConfigManager config;
   config.Load(configPath);
   shared.config = &config;
@@ -314,12 +314,19 @@ int main(int argc, char *argv[]) {
   CHECK(script.body.contains("Hunter's Communion"));
   CHECK(script.body.contains("Comunión de Cazadores"));
   CHECK(script.body.contains("/api/chat/messages"));
+  CHECK(script.body.contains("/api/chalices"));
+  CHECK(script.body.contains("Chalice Dungeons"));
+  CHECK(script.body.contains("Mazmorras de Cáliz"));
+  CHECK(script.body.contains("Map data not yet decoded"));
+  CHECK(script.body.contains("Los datos del mapa aún no están decodificados"));
   CHECK(script.body.contains("password-eye"));
 
   const HttpResult style = Send(Url(server, QStringLiteral("/assets/site.css")),
                                 QByteArrayLiteral("GET"));
   CHECK(style.status == 200);
   CHECK(style.body.contains(".chat-panel"));
+  CHECK(style.body.contains(".chalice-table"));
+  CHECK(style.body.contains(".dungeon-map-placeholder"));
   CHECK(style.body.contains(".password-eye"));
   CHECK(Send(Url(server, QStringLiteral("/assets/favicon.png")),
              QByteArrayLiteral("GET"))
@@ -329,11 +336,11 @@ int main(int argc, char *argv[]) {
       Send(Url(server, QStringLiteral("/api/chat/messages")),
            QByteArrayLiteral("GET"));
   CHECK(initialChat.status == 200);
-  CHECK(Data(initialChat).value(QStringLiteral("messages")).toArray().isEmpty());
+  CHECK(
+      Data(initialChat).value(QStringLiteral("messages")).toArray().isEmpty());
   CHECK(Data(initialChat).value(QStringLiteral("historyLimit")).toInt() == 3);
-  CHECK(Data(initialChat)
-            .value(QStringLiteral("maxMessageLength"))
-            .toInt() == 400);
+  CHECK(Data(initialChat).value(QStringLiteral("maxMessageLength")).toInt() ==
+        400);
 
   const HttpResult initialStatus = Send(
       Url(server, QStringLiteral("/api/status")), QByteArrayLiteral("GET"));
@@ -401,6 +408,123 @@ int main(int argc, char *argv[]) {
   CHECK(Data(webAccount).value(QStringLiteral("username")).toString() ==
         QStringLiteral("Izuku"));
 
+  const auto seedChalice =
+      [&](const QString &glyph, qint64 creator, int shareLevel, int ritualLevel,
+          int holyGrailTypeId, int subFeatureFlag) -> bool {
+    QSqlQuery insert(verification.Conn());
+    insert.prepare(QStringLiteral(
+        "INSERT INTO bloodborne_chalice(discernment_word,create_user_id,"
+        "create_chara_id,create_date,last_play_date,fixed_or_general,form_data,"
+        "form_data_version,holy_grail_type_id,ritual_level,share_level,status,"
+        "sub_feature_flag,turnout_level,unlock_flag_list,wish_material_list) "
+        "VALUES(?,?,'9223372036854776000','2026-08-28T08:30:31',"
+        "'2026-08-28T08:30:31',1,'SENSITIVE_FORM_DATA',0,?,?,?,1,?,0,"
+        "'[{\"UnlockFlag\":0}]','[]')"));
+    insert.addBindValue(glyph);
+    insert.addBindValue(creator);
+    insert.addBindValue(holyGrailTypeId);
+    insert.addBindValue(ritualLevel);
+    insert.addBindValue(shareLevel);
+    insert.addBindValue(subFeatureFlag);
+    return insert.exec();
+  };
+  CHECK(seedChalice(QStringLiteral("n2vskrmr"), account->userId, 2, 5, 11, 19));
+  CHECK(seedChalice(QStringLiteral("8abcde23"), -1, 2, 3, 1, 0));
+  CHECK(seedChalice(QStringLiteral("9hidden2"), account->userId, 0, 1, 0, 0));
+
+  const HttpResult chalicePage =
+      Send(Url(server, QStringLiteral("/chalice")), QByteArrayLiteral("GET"));
+  CHECK(chalicePage.status == 200);
+  CHECK(chalicePage.body.contains("/chalice"));
+  CHECK(Send(Url(server, QStringLiteral("/chalice/n2vskrmr")),
+             QByteArrayLiteral("GET"))
+            .status == 200);
+
+  const HttpResult chalices = Send(Url(server, QStringLiteral("/api/chalices")),
+                                   QByteArrayLiteral("GET"));
+  CHECK(chalices.status == 200);
+  CHECK(Data(chalices).value(QStringLiteral("total")).toInt() == 2);
+  CHECK(Data(chalices).value(QStringLiteral("storedTotal")).toInt() == 3);
+  const QJsonArray chaliceList =
+      Data(chalices).value(QStringLiteral("chalices")).toArray();
+  CHECK(chaliceList.size() == 2);
+  QJsonObject localChalice;
+  QJsonObject importedChalice;
+  for (const QJsonValue &value : chaliceList) {
+    const QJsonObject item = value.toObject();
+    if (item.value(QStringLiteral("glyph")).toString() ==
+        QStringLiteral("n2vskrmr"))
+      localChalice = item;
+    if (item.value(QStringLiteral("glyph")).toString() ==
+        QStringLiteral("8abcde23"))
+      importedChalice = item;
+  }
+  CHECK(!localChalice.isEmpty());
+  CHECK(localChalice.value(QStringLiteral("creator"))
+            .toObject()
+            .value(QStringLiteral("kind"))
+            .toString() == QStringLiteral("local"));
+  CHECK(localChalice.value(QStringLiteral("creator"))
+            .toObject()
+            .value(QStringLiteral("username"))
+            .toString() == QStringLiteral("Izuku"));
+  CHECK(localChalice.value(QStringLiteral("creator"))
+            .toObject()
+            .value(QStringLiteral("avatarUrl"))
+            .toString()
+            .isEmpty());
+  CHECK(localChalice.value(QStringLiteral("creator"))
+            .toObject()
+            .value(QStringLiteral("profileUrl"))
+            .toString() == QStringLiteral("/player/Izuku"));
+  CHECK(!importedChalice.isEmpty());
+  CHECK(importedChalice.value(QStringLiteral("creator"))
+            .toObject()
+            .value(QStringLiteral("kind"))
+            .toString() == QStringLiteral("imported"));
+  CHECK(!importedChalice.value(QStringLiteral("creator"))
+             .toObject()
+             .contains(QStringLiteral("username")));
+
+  const HttpResult glyphFilter =
+      Send(Url(server, QStringLiteral("/api/chalices?glyph=n2vskrmr")),
+           QByteArrayLiteral("GET"));
+  CHECK(glyphFilter.status == 200);
+  CHECK(Data(glyphFilter).value(QStringLiteral("total")).toInt() == 1);
+  const HttpResult filteredChalices = Send(
+      Url(server, QStringLiteral("/api/chalices?depth=5&type=11&rites=19")),
+      QByteArrayLiteral("GET"));
+  CHECK(Data(filteredChalices).value(QStringLiteral("total")).toInt() == 1);
+
+  const HttpResult chaliceDetail =
+      Send(Url(server, QStringLiteral("/api/chalices/n2vskrmr")),
+           QByteArrayLiteral("GET"));
+  CHECK(chaliceDetail.status == 200);
+  CHECK(Data(chaliceDetail).value(QStringLiteral("glyph")).toString() ==
+        QStringLiteral("n2vskrmr"));
+  CHECK(Data(chaliceDetail).value(QStringLiteral("ritualLevel")).toInt() == 5);
+  CHECK(Data(chaliceDetail).value(QStringLiteral("formDataBytes")).toInt() ==
+        QByteArrayLiteral("SENSITIVE_FORM_DATA").size());
+  CHECK(!chaliceDetail.body.contains("SENSITIVE_FORM_DATA"));
+  CHECK(!chaliceDetail.body.contains("SessionId"));
+  CHECK(!chaliceDetail.body.contains("Authorization"));
+  CHECK(!chaliceDetail.body.contains("izuku@example.test"));
+  CHECK(!Data(chaliceDetail).contains(QStringLiteral("createCharaId")));
+  CHECK(Send(Url(server, QStringLiteral("/api/chalices/9hidden2")),
+             QByteArrayLiteral("GET"))
+            .status == 404);
+  CHECK(Data(Send(Url(server, QStringLiteral("/api/chalices?glyph=9hidden2")),
+                  QByteArrayLiteral("GET")))
+            .value(QStringLiteral("total"))
+            .toInt(-1) == 0);
+  const HttpResult map =
+      Send(Url(server, QStringLiteral("/api/chalices/n2vskrmr/map")),
+           QByteArrayLiteral("GET"));
+  CHECK(map.status == 200);
+  CHECK(Data(map).value(QStringLiteral("status")).toString() ==
+        QStringLiteral("not_decoded"));
+  CHECK(Data(map).value(QStringLiteral("layout")).isNull());
+
   const HttpResult invalidAvatar =
       Send(Url(server, QStringLiteral("/api/account/avatar")),
            QByteArrayLiteral("POST"), QByteArrayLiteral("not-an-image"),
@@ -432,6 +556,13 @@ int main(int argc, char *argv[]) {
   CHECK(Send(Url(server, QStringLiteral("/avatars/not-a-uuid.png")),
              QByteArrayLiteral("GET"))
             .status == 404);
+  const QJsonObject chaliceWithAvatar =
+      Data(Send(Url(server, QStringLiteral("/api/chalices/n2vskrmr")),
+                QByteArrayLiteral("GET")));
+  CHECK(chaliceWithAvatar.value(QStringLiteral("creator"))
+            .toObject()
+            .value(QStringLiteral("avatarUrl"))
+            .toString() == avatarUrl);
 
   {
     QWriteLocker lock(&shared.clientsLock);
@@ -493,13 +624,14 @@ int main(int argc, char *argv[]) {
   CHECK(firstChat.value(QStringLiteral("username")).toString() ==
         QStringLiteral("Izuku"));
   CHECK(firstChat.value(QStringLiteral("avatarUrl")).toString() == avatarUrl);
-  CHECK(firstChat.value(QStringLiteral("message")).toString() == unicodeMessage);
+  CHECK(firstChat.value(QStringLiteral("message")).toString() ==
+        unicodeMessage);
   CHECK(firstChat.value(QStringLiteral("online")).toBool());
   CHECK(!firstChat.contains(QStringLiteral("account_id")));
-  CHECK(QDateTime::fromString(firstChat.value(QStringLiteral("createdAt"))
-                                  .toString(),
-                              Qt::ISODate)
-            .isValid());
+  CHECK(
+      QDateTime::fromString(
+          firstChat.value(QStringLiteral("createdAt")).toString(), Qt::ISODate)
+          .isValid());
 
   const HttpResult chatRateLimited =
       Json(server, QStringLiteral("/api/chat/messages"),
@@ -513,7 +645,8 @@ int main(int argc, char *argv[]) {
       Json(server, QStringLiteral("/api/chat/messages"),
            {{QStringLiteral("message"), xssMessage}}, login.cookie, csrf);
   CHECK(xssChat.status == 201);
-  CHECK(Data(xssChat).value(QStringLiteral("message")).toString() == xssMessage);
+  CHECK(Data(xssChat).value(QStringLiteral("message")).toString() ==
+        xssMessage);
 
   QSqlQuery injectChat(verification.Conn());
   injectChat.prepare(QStringLiteral(
@@ -542,14 +675,11 @@ int main(int argc, char *argv[]) {
     recentIds.insert(id);
     previousId = id;
   }
-  const qint64 cursor = recentMessages.at(0)
-                            .toObject()
-                            .value(QStringLiteral("id"))
-                            .toInteger();
-  const HttpResult incremental =
-      Send(Url(server,
-               QStringLiteral("/api/chat/messages?after=%1").arg(cursor)),
-           QByteArrayLiteral("GET"));
+  const qint64 cursor =
+      recentMessages.at(0).toObject().value(QStringLiteral("id")).toInteger();
+  const HttpResult incremental = Send(
+      Url(server, QStringLiteral("/api/chat/messages?after=%1").arg(cursor)),
+      QByteArrayLiteral("GET"));
   const QJsonArray incrementalMessages =
       Data(incremental).value(QStringLiteral("messages")).toArray();
   CHECK(incrementalMessages.size() == 2);
@@ -558,14 +688,13 @@ int main(int argc, char *argv[]) {
   const HttpResult afterZero =
       Send(Url(server, QStringLiteral("/api/chat/messages?after=0")),
            QByteArrayLiteral("GET"));
-  CHECK(Data(afterZero).value(QStringLiteral("messages")).toArray().size() == 3);
+  CHECK(Data(afterZero).value(QStringLiteral("messages")).toArray().size() ==
+        3);
   const HttpResult afterUnknown =
       Send(Url(server, QStringLiteral("/api/chat/messages?after=999999999")),
            QByteArrayLiteral("GET"));
-  CHECK(Data(afterUnknown)
-            .value(QStringLiteral("messages"))
-            .toArray()
-            .isEmpty());
+  CHECK(
+      Data(afterUnknown).value(QStringLiteral("messages")).toArray().isEmpty());
   CHECK(Send(Url(server, QStringLiteral("/api/chat/messages?after=invalid")),
              QByteArrayLiteral("GET"))
             .status == 400);
@@ -600,27 +729,36 @@ int main(int argc, char *argv[]) {
   // Seed unrelated persistent data so chat reset scope is verified against the
   // real community and Bloodborne tables.
   QSqlQuery preserved(verification.Conn());
-  CHECK(preserved.exec(QStringLiteral(
-      "INSERT OR IGNORE INTO bloodborne_player_stats(user_id) VALUES(%1)")
-                           .arg(account->userId)));
-  CHECK(preserved.exec(QStringLiteral(
-      "INSERT INTO bloodborne_blood_message(owner_user_id,owner_chara_id,area_id,"
-      "area_region_id,channel_id,blood_data,blood_data_version,chara_data,"
-      "chara_data_version,prev_blood_mess_id,created_at) "
-      "VALUES(%1,1,10,20,30,'AA==',1,0,1,0,1)")
-                           .arg(account->userId)));
-  CHECK(preserved.exec(QStringLiteral(
-      "INSERT INTO bloodborne_tomb_message(owner_user_id,owner_chara_id,area_id,"
-      "area_region_id,channel_id,tomb_data,tomb_data_version,death_vision_data,"
-      "death_vision_data_version,created_at) "
-      "VALUES(%1,1,10,20,30,'AA==',1,'AA==',1,1)")
-                           .arg(account->userId)));
-  CHECK(preserved.exec(QStringLiteral(
-      "INSERT INTO bloodborne_wandering_ghost(owner_user_id,owner_chara_id,area_id,"
-      "area_region_id,channel_id,matching_level,reject_ignore,wandering_ghost_data,"
-      "wandering_ghost_data_version,created_at,expires_at) "
-      "VALUES(%1,1,10,20,30,100,0,'AA==',1,1,9999999999)")
-                           .arg(account->userId)));
+  CHECK(preserved.exec(
+      QStringLiteral(
+          "INSERT OR IGNORE INTO bloodborne_player_stats(user_id) VALUES(%1)")
+          .arg(account->userId)));
+  CHECK(preserved.exec(
+      QStringLiteral(
+          "INSERT INTO "
+          "bloodborne_blood_message(owner_user_id,owner_chara_id,area_id,"
+          "area_region_id,channel_id,blood_data,blood_data_version,chara_data,"
+          "chara_data_version,prev_blood_mess_id,created_at) "
+          "VALUES(%1,1,10,20,30,'AA==',1,0,1,0,1)")
+          .arg(account->userId)));
+  CHECK(preserved.exec(
+      QStringLiteral(
+          "INSERT INTO "
+          "bloodborne_tomb_message(owner_user_id,owner_chara_id,area_id,"
+          "area_region_id,channel_id,tomb_data,tomb_data_version,death_vision_"
+          "data,"
+          "death_vision_data_version,created_at) "
+          "VALUES(%1,1,10,20,30,'AA==',1,'AA==',1,1)")
+          .arg(account->userId)));
+  CHECK(preserved.exec(
+      QStringLiteral(
+          "INSERT INTO "
+          "bloodborne_wandering_ghost(owner_user_id,owner_chara_id,area_id,"
+          "area_region_id,channel_id,matching_level,reject_ignore,wandering_"
+          "ghost_data,"
+          "wandering_ghost_data_version,created_at,expires_at) "
+          "VALUES(%1,1,10,20,30,100,0,'AA==',1,1,9999999999)")
+          .arg(account->userId)));
   const auto tableCount = [&](const QString &table) -> qint64 {
     QSqlQuery count(verification.Conn());
     if (!count.exec(QStringLiteral("SELECT COUNT(*) FROM ") + table) ||
@@ -638,6 +776,7 @@ int main(int argc, char *argv[]) {
       QStringLiteral("bloodborne_blood_message"),
       QStringLiteral("bloodborne_tomb_message"),
       QStringLiteral("bloodborne_wandering_ghost"),
+      QStringLiteral("bloodborne_chalice"),
   };
   QHash<QString, qint64> countsBeforeReset;
   for (const QString &table : preservedTables) {
@@ -648,8 +787,8 @@ int main(int argc, char *argv[]) {
   // A restart before the configured 24-hour interval preserves chat history.
   server.Stop();
   QSqlQuery resetState(verification.Conn());
-  resetState.prepare(QStringLiteral(
-      "UPDATE bloodborne_web_chat_state SET value=? WHERE key='last_chat_reset'"));
+  resetState.prepare(QStringLiteral("UPDATE bloodborne_web_chat_state SET "
+                                    "value=? WHERE key='last_chat_reset'"));
   resetState.addBindValue(QDateTime::currentSecsSinceEpoch() - 23 * 60 * 60);
   CHECK(resetState.exec());
   BloodborneWebsiteServer notDue;
@@ -679,12 +818,13 @@ int main(int argc, char *argv[]) {
   CHECK(tableCount(QStringLiteral("bloodborne_web_chat_message")) == 0);
   for (const QString &table : preservedTables)
     CHECK(tableCount(table) == countsBeforeReset.value(table));
-  CHECK(QFileInfo::exists(QDir(temporary.filePath(
-                                  QStringLiteral("data/bloodborne-website/avatars")))
+  CHECK(QFileInfo::exists(QDir(temporary.filePath(QStringLiteral(
+                                   "data/bloodborne-website/avatars")))
                               .filePath(QFileInfo(avatarUrl).fileName())));
   QSqlQuery currentReset(verification.Conn());
-  CHECK(currentReset.exec(QStringLiteral(
-      "SELECT value FROM bloodborne_web_chat_state WHERE key='last_chat_reset'")));
+  CHECK(currentReset.exec(
+      QStringLiteral("SELECT value FROM bloodborne_web_chat_state WHERE "
+                     "key='last_chat_reset'")));
   CHECK(currentReset.next());
   CHECK(currentReset.value(0).toLongLong() >= resetStartedAt);
 
@@ -711,7 +851,7 @@ int main(int argc, char *argv[]) {
 
   QSqlQuery migrations(verification.Conn());
   CHECK(migrations.exec(
-      QStringLiteral("SELECT COUNT(*) FROM migration WHERE migration_id=6")));
+      QStringLiteral("SELECT COUNT(*) FROM migration WHERE migration_id=7")));
   CHECK(migrations.next());
   CHECK(migrations.value(0).toInt() == 1);
 
