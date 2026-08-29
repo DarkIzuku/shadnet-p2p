@@ -83,6 +83,8 @@ void ConfigManager::Parse(const QString& path) {
         std::clamp(str("BloodborneWebsiteChatHistoryLimit", "100").toInt(), 1, 500);
     m_bloodborneWebsiteChatResetHours =
         std::clamp(str("BloodborneWebsiteChatResetHours", "24").toInt(), 1, 8760);
+    m_bloodborneWebsiteDownloadMaxFileSizeMiB =
+        std::clamp(str("BloodborneWebsiteDownloadMaxFileSizeMiB", "512").toInt(), 1, 2048);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_statsCacheLife = str("StatsCacheLife", "30").toInt();
