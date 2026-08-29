@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QHostAddress>
 #include <QHttpHeaders>
 #include <QHttpServer>
@@ -33,6 +34,7 @@
 #include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStringList>
 #include <QTcpServer>
 #include <QTimer>
 #include <QUrl>
@@ -50,9 +52,11 @@ using StatusCode = QHttpServerResponse::StatusCode;
 
 constexpr qsizetype MaxJsonBody = 16 * 1024;
 constexpr qsizetype MaxAvatarBody = 2 * 1024 * 1024;
+constexpr qsizetype MaxDownloadMultipartOverhead = 128 * 1024;
 constexpr qint64 WebSessionLifetimeSeconds = 7 * 24 * 60 * 60;
 constexpr int MaxPlayersPerPage = 100;
 constexpr int MaxChalicesPerPage = 100;
+constexpr int MaxDownloadsPerPage = 100;
 
 StatusCode Status(int code) {
     return static_cast<StatusCode>(code);
@@ -248,6 +252,193 @@ bool ValidAvatarFile(const QString& fileName) {
            uuid.toString(QUuid::WithoutBraces).compare(uuidText, Qt::CaseInsensitive) == 0;
 }
 
+struct DownloadRecord {
+    qint64 id = 0;
+    QString displayName;
+    QString storedFilename;
+    QString originalFilename;
+    QString version;
+    QString description;
+    QString category;
+    qint64 fileSize = 0;
+    QString sha256;
+    qint64 createdAt = 0;
+    qint64 updatedAt = 0;
+    bool active = false;
+    qint64 downloadCount = 0;
+};
+
+const QStringList& DownloadCategories() {
+    static const QStringList categories = {
+        QStringLiteral("Server"), QStringLiteral("Client"), QStringLiteral("BBLauncher"),
+        QStringLiteral("Mods"),   QStringLiteral("Tools"),  QStringLiteral("Other"),
+    };
+    return categories;
+}
+
+bool ValidDownloadCategory(const QString& category) {
+    return DownloadCategories().contains(category, Qt::CaseSensitive);
+}
+
+bool HasUnsafeDownloadPathSyntax(const QString& fileName) {
+    return fileName.trimmed().isEmpty() || fileName.contains(QLatin1Char('/')) ||
+           fileName.contains(QLatin1Char('\\')) || fileName.contains(QStringLiteral("..")) ||
+           fileName.contains(QLatin1Char('\r')) || fileName.contains(QLatin1Char('\n')) ||
+           fileName.contains(QChar::Null);
+}
+
+QString SanitizeDownloadFilename(QString fileName) {
+    fileName = fileName.normalized(QString::NormalizationForm_C).trimmed();
+    fileName.replace(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f<>:\"/\\\\|?*]")),
+                     QStringLiteral("_"));
+    for (qsizetype index = 0; index < fileName.size(); ++index) {
+        const auto category = fileName.at(index).category();
+        if (category == QChar::Other_Control || category == QChar::Other_Format)
+            fileName[index] = QLatin1Char('_');
+    }
+    fileName.remove(QRegularExpression(QStringLiteral("[ .]+$")));
+    if (fileName.size() > 180)
+        fileName = fileName.left(180);
+    if (fileName.isEmpty())
+        fileName = QStringLiteral("download.bin");
+    return fileName;
+}
+
+QString SafeAsciiDownloadFilename(QString fileName) {
+    fileName.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")), QStringLiteral("_"));
+    fileName.remove(QRegularExpression(QStringLiteral("[ .]+$")));
+    if (fileName.size() > 120)
+        fileName = fileName.left(120);
+    return fileName.isEmpty() ? QStringLiteral("download.bin") : fileName;
+}
+
+bool ValidStoredDownloadFilename(const QString& fileName) {
+    static const QRegularExpression expression(
+        QStringLiteral("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"));
+    return expression.match(fileName).hasMatch();
+}
+
+std::optional<qint64> PositiveDownloadId(const QString& text) {
+    bool ok = false;
+    const qint64 id = text.toLongLong(&ok);
+    if (!ok || id <= 0)
+        return std::nullopt;
+    return id;
+}
+
+struct MultipartForm {
+    QHash<QString, QString> fields;
+    QByteArray fileBytes;
+    QString fileName;
+    bool hasFile = false;
+};
+
+QString MultipartParameter(const QString& disposition, const QString& parameter) {
+    const QRegularExpression expression(QStringLiteral("(?:^|;)\\s*%1=\"([^\"\\r\\n]*)\"")
+                                            .arg(QRegularExpression::escape(parameter)),
+                                        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = expression.match(disposition);
+    return match.hasMatch() ? match.captured(1) : QString();
+}
+
+std::optional<MultipartForm> ParseMultipart(const QHttpServerRequest& request,
+                                            qsizetype maxFileBytes) {
+    const QByteArray contentType = HeaderValue(request, QByteArrayLiteral("Content-Type"));
+    const QList<QByteArray> contentTypeParts = contentType.split(';');
+    if (contentTypeParts.isEmpty() ||
+        contentTypeParts.first().trimmed().compare(QByteArrayLiteral("multipart/form-data"),
+                                                   Qt::CaseInsensitive) != 0) {
+        return std::nullopt;
+    }
+
+    QByteArray boundary;
+    for (QByteArray part : contentTypeParts) {
+        part = part.trimmed();
+        if (!part.toLower().startsWith(QByteArrayLiteral("boundary=")))
+            continue;
+        boundary = part.mid(9).trimmed();
+        if (boundary.size() >= 2 && boundary.front() == '"' && boundary.back() == '"')
+            boundary = boundary.mid(1, boundary.size() - 2);
+        break;
+    }
+    static const QRegularExpression validBoundary(
+        QStringLiteral("^[A-Za-z0-9'()+_,./:=?-]{1,70}$"));
+    if (!validBoundary.match(QString::fromLatin1(boundary)).hasMatch())
+        return std::nullopt;
+
+    const QByteArray body = request.body();
+    if (body.isEmpty() || body.size() > maxFileBytes + MaxDownloadMultipartOverhead)
+        return std::nullopt;
+    const QByteArray delimiter = QByteArrayLiteral("--") + boundary;
+    if (!body.startsWith(delimiter + QByteArrayLiteral("\r\n")))
+        return std::nullopt;
+
+    MultipartForm result;
+    qsizetype cursor = delimiter.size() + 2;
+    while (cursor < body.size()) {
+        const qsizetype headerEnd = body.indexOf(QByteArrayLiteral("\r\n\r\n"), cursor);
+        if (headerEnd < cursor || headerEnd - cursor > 8192)
+            return std::nullopt;
+        const QByteArray rawHeaders = body.mid(cursor, headerEnd - cursor);
+        QByteArray dispositionBytes;
+        for (const QByteArray& line : rawHeaders.split('\n')) {
+            const QByteArray cleanLine = line.endsWith('\r') ? line.left(line.size() - 1) : line;
+            if (cleanLine.toLower().startsWith(QByteArrayLiteral("content-disposition:")))
+                dispositionBytes = cleanLine.mid(20).trimmed();
+        }
+        const QString disposition = QString::fromUtf8(dispositionBytes);
+        if (!disposition.startsWith(QStringLiteral("form-data"), Qt::CaseInsensitive))
+            return std::nullopt;
+        const QString name = MultipartParameter(disposition, QStringLiteral("name"));
+        if (name.isEmpty())
+            return std::nullopt;
+
+        const qsizetype dataStart = headerEnd + 4;
+        const qsizetype next = body.indexOf(QByteArrayLiteral("\r\n") + delimiter, dataStart);
+        if (next < dataStart)
+            return std::nullopt;
+        const QByteArray value = body.mid(dataStart, next - dataStart);
+        const QString fileName = MultipartParameter(disposition, QStringLiteral("filename"));
+        if (!fileName.isNull() && !fileName.isEmpty()) {
+            if (name != QStringLiteral("file") || result.hasFile || value.size() > maxFileBytes)
+                return std::nullopt;
+            result.fileName = fileName;
+            result.fileBytes = value;
+            result.hasFile = true;
+        } else {
+            static const QSet<QString> allowedFields = {
+                QStringLiteral("displayName"), QStringLiteral("version"),
+                QStringLiteral("category"),    QStringLiteral("description"),
+                QStringLiteral("isActive"),
+            };
+            if (!allowedFields.contains(name) || result.fields.contains(name) ||
+                value.size() > 8192)
+                return std::nullopt;
+            result.fields.insert(name, QString::fromUtf8(value));
+        }
+
+        cursor = next + 2 + delimiter.size();
+        if (body.mid(cursor, 2) == QByteArrayLiteral("--")) {
+            cursor += 2;
+            if (cursor == body.size() || body.mid(cursor) == QByteArrayLiteral("\r\n"))
+                return result;
+            return std::nullopt;
+        }
+        if (body.mid(cursor, 2) != QByteArrayLiteral("\r\n"))
+            return std::nullopt;
+        cursor += 2;
+    }
+    return std::nullopt;
+}
+
+QByteArray DownloadContentDisposition(const QString& originalFilename) {
+    const QByteArray encoded =
+        QUrl::toPercentEncoding(originalFilename, QByteArray(), QByteArray());
+    return QByteArrayLiteral("attachment; filename=\"") +
+           SafeAsciiDownloadFilename(originalFilename).toLatin1() +
+           QByteArrayLiteral("\"; filename*=UTF-8''") + encoded;
+}
+
 } // namespace
 
 class BloodborneWebsiteServer::Impl {
@@ -259,6 +450,7 @@ public:
         QString username;
         QByteArray rawToken;
         QByteArray csrf;
+        bool admin = false;
     };
 
     bool Start(ConfigManager* config, const QString& dbPath, SharedState* shared) {
@@ -286,7 +478,8 @@ public:
             dataBase.cdUp();
         m_dataRoot = dataBase.filePath(QStringLiteral("data/bloodborne-website"));
         m_avatarDirectory = QDir(m_dataRoot).filePath(QStringLiteral("avatars"));
-        if (!QDir().mkpath(m_avatarDirectory)) {
+        m_downloadDirectory = dataBase.filePath(QStringLiteral("data/downloads"));
+        if (!QDir().mkpath(m_avatarDirectory) || !QDir().mkpath(m_downloadDirectory)) {
             qWarning() << "Bloodborne website could not create data directory:" << m_dataRoot;
             return false;
         }
@@ -422,6 +615,10 @@ private:
                       [this](const QString&, const QHttpServerRequest&) { return StaticShell(); });
         m_http->route(QStringLiteral("/player/<arg>"), QHttpServerRequest::Method::Get,
                       [this](const QString&, const QHttpServerRequest&) { return StaticShell(); });
+        m_http->route(QStringLiteral("/downloads"), QHttpServerRequest::Method::Get, shell);
+        m_http->route(
+            QStringLiteral("/admin/downloads"), QHttpServerRequest::Method::Get,
+            [this](const QHttpServerRequest& request) { return AdminDownloadsPage(request); });
 
         m_http->route(QStringLiteral("/assets/site.css"), QHttpServerRequest::Method::Get,
                       [this](const QHttpServerRequest&) {
@@ -468,6 +665,34 @@ private:
         m_http->route(
             QStringLiteral("/api/chalices/<arg>"), QHttpServerRequest::Method::Get,
             [this](const QString& glyph, const QHttpServerRequest&) { return ApiChalice(glyph); });
+        m_http->route(QStringLiteral("/api/downloads"), QHttpServerRequest::Method::Get,
+                      [this](const QHttpServerRequest& request) { return ApiDownloads(request); });
+        m_http->route(
+            QStringLiteral("/api/downloads/<arg>"), QHttpServerRequest::Method::Get,
+            [this](const QString& id, const QHttpServerRequest&) { return ApiDownload(id); });
+        m_http->route(
+            QStringLiteral("/downloads/file/<arg>"), QHttpServerRequest::Method::Get,
+            [this](const QString& id, const QHttpServerRequest&) { return DownloadFile(id); });
+        m_http->route(
+            QStringLiteral("/api/admin/downloads"), QHttpServerRequest::Method::Get,
+            [this](const QHttpServerRequest& request) { return ApiAdminDownloads(request); });
+        m_http->route(
+            QStringLiteral("/api/admin/downloads"), QHttpServerRequest::Method::Post,
+            [this](const QHttpServerRequest& request) { return ApiAdminDownloadCreate(request); });
+        m_http->route(QStringLiteral("/api/admin/downloads/<arg>"), QHttpServerRequest::Method::Put,
+                      [this](const QString& id, const QHttpServerRequest& request) {
+                          return ApiAdminDownloadUpdate(id, request);
+                      });
+        m_http->route(QStringLiteral("/api/admin/downloads/<arg>/replace"),
+                      QHttpServerRequest::Method::Post,
+                      [this](const QString& id, const QHttpServerRequest& request) {
+                          return ApiAdminDownloadReplace(id, request);
+                      });
+        m_http->route(QStringLiteral("/api/admin/downloads/<arg>"),
+                      QHttpServerRequest::Method::Delete,
+                      [this](const QString& id, const QHttpServerRequest& request) {
+                          return ApiAdminDownloadDelete(id, request);
+                      });
         m_http->route(QStringLiteral("/api/register"), QHttpServerRequest::Method::Post,
                       [this](const QHttpServerRequest& request) { return ApiRegister(request); });
         m_http->route(QStringLiteral("/api/login"), QHttpServerRequest::Method::Post,
@@ -909,6 +1134,538 @@ private:
         return JsonData(data);
     }
 
+    qint64 MaxDownloadFileBytes() const {
+        return static_cast<qint64>(m_config->GetBloodborneWebsiteDownloadMaxFileSizeMiB()) * 1024 *
+               1024;
+    }
+
+    static QString DownloadSelect() {
+        return QStringLiteral(
+            "SELECT id,display_name,stored_filename,original_filename,version,description,"
+            "category,file_size,sha256,created_at,updated_at,is_active,download_count "
+            "FROM bloodborne_web_download ");
+    }
+
+    static DownloadRecord DownloadFromQuery(const QSqlQuery& query) {
+        DownloadRecord download;
+        download.id = query.value(0).toLongLong();
+        download.displayName = query.value(1).toString();
+        download.storedFilename = query.value(2).toString();
+        download.originalFilename = query.value(3).toString();
+        download.version = query.value(4).toString();
+        download.description = query.value(5).toString();
+        download.category = query.value(6).toString();
+        download.fileSize = query.value(7).toLongLong();
+        download.sha256 = query.value(8).toString();
+        download.createdAt = query.value(9).toLongLong();
+        download.updatedAt = query.value(10).toLongLong();
+        download.active = query.value(11).toBool();
+        download.downloadCount = query.value(12).toLongLong();
+        return download;
+    }
+
+    static QJsonArray DownloadCategoryArray() {
+        QJsonArray categories;
+        for (const QString& category : DownloadCategories())
+            categories.append(category);
+        return categories;
+    }
+
+    static QJsonObject DownloadObject(const DownloadRecord& download) {
+        QJsonObject object;
+        object.insert(QStringLiteral("id"), download.id);
+        object.insert(QStringLiteral("displayName"), download.displayName);
+        object.insert(QStringLiteral("originalFilename"), download.originalFilename);
+        object.insert(QStringLiteral("version"), download.version);
+        object.insert(QStringLiteral("description"), download.description);
+        object.insert(QStringLiteral("category"), download.category);
+        object.insert(QStringLiteral("fileSize"), download.fileSize);
+        object.insert(QStringLiteral("sha256"), download.sha256);
+        object.insert(QStringLiteral("createdAt"), download.createdAt);
+        object.insert(QStringLiteral("updatedAt"), download.updatedAt);
+        object.insert(QStringLiteral("isActive"), download.active);
+        object.insert(QStringLiteral("downloadCount"), download.downloadCount);
+        object.insert(QStringLiteral("downloadUrl"),
+                      QStringLiteral("/downloads/file/%1").arg(download.id));
+        return object;
+    }
+
+    std::optional<DownloadRecord> FindDownload(qint64 id, bool includeInactive) const {
+        QSqlQuery query(m_db->Conn());
+        query.prepare(DownloadSelect() + QStringLiteral("WHERE id=?") +
+                      (includeInactive ? QString() : QStringLiteral(" AND is_active=1")));
+        query.addBindValue(id);
+        if (!query.exec() || !query.next())
+            return std::nullopt;
+        return DownloadFromQuery(query);
+    }
+
+    std::optional<QString> DownloadPath(const QString& storedFilename,
+                                        bool requireFile = true) const {
+        if (!ValidStoredDownloadFilename(storedFilename))
+            return std::nullopt;
+        const QString root = QFileInfo(m_downloadDirectory).absoluteFilePath();
+        const QString path = QDir(root).absoluteFilePath(storedFilename);
+        const QFileInfo info(path);
+        if (info.absolutePath() != root || info.isSymLink())
+            return std::nullopt;
+        if (requireFile && !info.isFile())
+            return std::nullopt;
+        return path;
+    }
+
+    std::optional<QPair<QString, QString>> StoreDownloadFile(const QByteArray& bytes) const {
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            const QString storedFilename =
+                QUuid::createUuid().toString(QUuid::WithoutBraces).toLower();
+            const auto path = DownloadPath(storedFilename, false);
+            if (!path || QFileInfo::exists(*path))
+                continue;
+            QSaveFile file(*path);
+            if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() ||
+                !file.commit()) {
+                continue;
+            }
+            QFile::setPermissions(*path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+            const QString sha256 = QString::fromLatin1(
+                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+            return QPair<QString, QString>{storedFilename, sha256};
+        }
+        return std::nullopt;
+    }
+
+    static bool ValidSingleLineMetadata(const QString& value, int minBytes, int maxBytes) {
+        const int bytes = value.toUtf8().size();
+        if (bytes < minBytes || bytes > maxBytes || value.contains(QChar::Null))
+            return false;
+        for (const QChar character : value) {
+            if (character.category() == QChar::Other_Control)
+                return false;
+        }
+        return true;
+    }
+
+    static bool ValidDescription(const QString& value) {
+        if (value.toUtf8().size() > 4000 || value.contains(QChar::Null))
+            return false;
+        for (const QChar character : value) {
+            if (character.category() == QChar::Other_Control && character != QLatin1Char('\n') &&
+                character != QLatin1Char('\r') && character != QLatin1Char('\t')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static std::optional<bool> MultipartActive(const MultipartForm& form, bool defaultValue) {
+        if (!form.fields.contains(QStringLiteral("isActive")))
+            return defaultValue;
+        const QString value = form.fields.value(QStringLiteral("isActive")).trimmed().toLower();
+        if (value == QStringLiteral("true") || value == QStringLiteral("1") ||
+            value == QStringLiteral("on")) {
+            return true;
+        }
+        if (value == QStringLiteral("false") || value == QStringLiteral("0") || value.isEmpty())
+            return false;
+        return std::nullopt;
+    }
+
+    QHttpServerResponse AdminDownloadsPage(const QHttpServerRequest& request) {
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!session->admin)
+            return JsonError(Status(403), QStringLiteral("admin_required"),
+                             QStringLiteral("Administrator access required"));
+        return StaticShell();
+    }
+
+    QHttpServerResponse ApiDownloads(const QHttpServerRequest& request) const {
+        const QUrlQuery queryItems(request.url());
+        const QString category = queryItems.queryItemValue(QStringLiteral("category")).trimmed();
+        if (!category.isEmpty() && !ValidDownloadCategory(category))
+            return JsonError(Status(400), QStringLiteral("invalid_category"),
+                             QStringLiteral("Invalid download category"));
+
+        bool pageOk = false;
+        int page = queryItems.queryItemValue(QStringLiteral("page")).toInt(&pageOk);
+        if (!pageOk)
+            page = 1;
+        bool limitOk = false;
+        int limit = queryItems.queryItemValue(QStringLiteral("limit")).toInt(&limitOk);
+        if (!limitOk)
+            limit = 24;
+        if (page < 1 || limit < 1 || limit > MaxDownloadsPerPage)
+            return JsonError(Status(400), QStringLiteral("invalid_pagination"),
+                             QStringLiteral("Invalid download pagination"));
+
+        QString where = QStringLiteral("is_active=1");
+        if (!category.isEmpty())
+            where += QStringLiteral(" AND category=?");
+        QSqlQuery count(m_db->Conn());
+        count.prepare(QStringLiteral("SELECT COUNT(*) FROM bloodborne_web_download WHERE ") +
+                      where);
+        if (!category.isEmpty())
+            count.addBindValue(category);
+        if (!count.exec() || !count.next())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to count downloads"));
+        const qint64 total = count.value(0).toLongLong();
+
+        QSqlQuery query(m_db->Conn());
+        query.prepare(DownloadSelect() + QStringLiteral("WHERE ") + where +
+                      QStringLiteral(" ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?"));
+        if (!category.isEmpty())
+            query.addBindValue(category);
+        query.addBindValue(limit);
+        query.addBindValue(static_cast<qint64>(page - 1) * limit);
+        if (!query.exec())
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to list downloads"));
+        QJsonArray downloads;
+        while (query.next())
+            downloads.append(DownloadObject(DownloadFromQuery(query)));
+
+        QJsonObject data;
+        data.insert(QStringLiteral("downloads"), downloads);
+        data.insert(QStringLiteral("total"), total);
+        data.insert(QStringLiteral("page"), page);
+        data.insert(QStringLiteral("pages"), std::max<qint64>(1, (total + limit - 1) / limit));
+        data.insert(QStringLiteral("categories"), DownloadCategoryArray());
+        return JsonData(data);
+    }
+
+    QHttpServerResponse ApiDownload(const QString& rawId) const {
+        const auto id = PositiveDownloadId(rawId);
+        const auto download = id ? FindDownload(*id, false) : std::nullopt;
+        if (!download)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+        return JsonData(DownloadObject(*download));
+    }
+
+    QHttpServerResponse DownloadFile(const QString& rawId) {
+        const auto id = PositiveDownloadId(rawId);
+        const auto download = id ? FindDownload(*id, false) : std::nullopt;
+        if (!download)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+        const auto path = DownloadPath(download->storedFilename);
+        if (!path)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+        QFile file(*path);
+        if (!file.open(QIODevice::ReadOnly) || file.size() != download->fileSize)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+        const QByteArray bytes = file.readAll();
+        if (bytes.size() != download->fileSize)
+            return JsonError(Status(500), QStringLiteral("download_read_failed"),
+                             QStringLiteral("Unable to read download"));
+
+        QSqlQuery increment(m_db->Conn());
+        increment.prepare(QStringLiteral(
+            "UPDATE bloodborne_web_download SET download_count=download_count+1 WHERE id=? "
+            "AND is_active=1"));
+        increment.addBindValue(download->id);
+        if (!increment.exec() || increment.numRowsAffected() != 1)
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to begin download"));
+
+        QHttpServerResponse response{QByteArrayLiteral("application/octet-stream"), bytes,
+                                     Status(200)};
+        QHttpHeaders headers = response.headers();
+        headers.append(QByteArrayLiteral("Content-Disposition"),
+                       DownloadContentDisposition(download->originalFilename));
+        response.setHeaders(std::move(headers));
+        return Harden(std::move(response));
+    }
+
+    QHttpServerResponse ApiAdminDownloads(const QHttpServerRequest& request) {
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!session->admin)
+            return JsonError(Status(403), QStringLiteral("admin_required"),
+                             QStringLiteral("Administrator access required"));
+
+        QSqlQuery query(m_db->Conn());
+        if (!query.exec(DownloadSelect() +
+                        QStringLiteral("ORDER BY updated_at DESC,id DESC LIMIT 1000"))) {
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to list downloads"));
+        }
+        QJsonArray downloads;
+        while (query.next())
+            downloads.append(DownloadObject(DownloadFromQuery(query)));
+        QJsonObject data;
+        data.insert(QStringLiteral("downloads"), downloads);
+        data.insert(QStringLiteral("categories"), DownloadCategoryArray());
+        data.insert(QStringLiteral("maxFileSizeBytes"), MaxDownloadFileBytes());
+        return JsonData(data);
+    }
+
+    QHttpServerResponse ApiAdminDownloadCreate(const QHttpServerRequest& request) {
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!session->admin)
+            return JsonError(Status(403), QStringLiteral("admin_required"),
+                             QStringLiteral("Administrator access required"));
+        if (!SameOrigin(request) || !ValidCsrf(request, *session))
+            return JsonError(Status(403), QStringLiteral("csrf_rejected"),
+                             QStringLiteral("Request verification failed"));
+        if (request.body().size() > MaxDownloadFileBytes() + MaxDownloadMultipartOverhead)
+            return JsonError(Status(413), QStringLiteral("download_too_large"),
+                             QStringLiteral("Download file exceeds the configured limit"));
+        const auto form = ParseMultipart(request, MaxDownloadFileBytes());
+        if (!form || !form->hasFile || form->fileBytes.isEmpty())
+            return JsonError(Status(400), QStringLiteral("invalid_upload"),
+                             QStringLiteral("A valid download file is required"));
+        if (HasUnsafeDownloadPathSyntax(form->fileName))
+            return JsonError(Status(400), QStringLiteral("unsafe_filename"),
+                             QStringLiteral("File name contains unsafe path syntax"));
+
+        const QString displayName = form->fields.value(QStringLiteral("displayName")).trimmed();
+        const QString version = form->fields.value(QStringLiteral("version")).trimmed();
+        const QString description = form->fields.value(QStringLiteral("description")).trimmed();
+        const QString category = form->fields.value(QStringLiteral("category")).trimmed();
+        const auto active = MultipartActive(*form, true);
+        if (!ValidSingleLineMetadata(displayName, 1, 240) ||
+            !ValidSingleLineMetadata(version, 0, 128) || !ValidDescription(description) ||
+            !ValidDownloadCategory(category) || !active) {
+            return JsonError(Status(400), QStringLiteral("invalid_metadata"),
+                             QStringLiteral("Download metadata is invalid"));
+        }
+
+        const QString originalFilename = SanitizeDownloadFilename(form->fileName);
+        const auto stored = StoreDownloadFile(form->fileBytes);
+        if (!stored)
+            return JsonError(Status(500), QStringLiteral("download_storage_failed"),
+                             QStringLiteral("Unable to store download"));
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        QSqlQuery insert(m_db->Conn());
+        insert.prepare(QStringLiteral(
+            "INSERT INTO bloodborne_web_download(display_name,stored_filename,original_filename,"
+            "version,description,category,file_size,sha256,created_at,updated_at,is_active) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)"));
+        insert.addBindValue(displayName);
+        insert.addBindValue(stored->first);
+        insert.addBindValue(originalFilename);
+        insert.addBindValue(version);
+        insert.addBindValue(description);
+        insert.addBindValue(category);
+        insert.addBindValue(form->fileBytes.size());
+        insert.addBindValue(stored->second);
+        insert.addBindValue(now);
+        insert.addBindValue(now);
+        insert.addBindValue(*active ? 1 : 0);
+        if (!insert.exec()) {
+            if (const auto path = DownloadPath(stored->first))
+                QFile::remove(*path);
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to register download"));
+        }
+        const qint64 id = insert.lastInsertId().toLongLong();
+        qInfo().noquote() << "[WEBSITE DOWNLOAD UPLOAD]"
+                          << "admin=" + session->username << "id=" + QString::number(id)
+                          << "category=" + category
+                          << "bytes=" + QString::number(form->fileBytes.size());
+        const auto download = FindDownload(id, true);
+        return download ? JsonData(DownloadObject(*download), Status(201))
+                        : JsonError(Status(500), QStringLiteral("database_error"),
+                                    QStringLiteral("Unable to load stored download"));
+    }
+
+    QHttpServerResponse ApiAdminDownloadUpdate(const QString& rawId,
+                                               const QHttpServerRequest& request) {
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!session->admin)
+            return JsonError(Status(403), QStringLiteral("admin_required"),
+                             QStringLiteral("Administrator access required"));
+        if (!SameOrigin(request) || !ValidCsrf(request, *session))
+            return JsonError(Status(403), QStringLiteral("csrf_rejected"),
+                             QStringLiteral("Request verification failed"));
+        const auto id = PositiveDownloadId(rawId);
+        const auto existing = id ? FindDownload(*id, true) : std::nullopt;
+        if (!existing)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+        const auto body = ParseJsonObject(request);
+        if (!body || body->isEmpty())
+            return JsonError(Status(400), QStringLiteral("invalid_request"),
+                             QStringLiteral("Invalid download update"));
+        static const QSet<QString> allowed = {
+            QStringLiteral("displayName"), QStringLiteral("version"),
+            QStringLiteral("description"), QStringLiteral("category"),
+            QStringLiteral("isActive"),
+        };
+        for (auto it = body->constBegin(); it != body->constEnd(); ++it) {
+            if (!allowed.contains(it.key()))
+                return JsonError(Status(400), QStringLiteral("invalid_metadata"),
+                                 QStringLiteral("Download metadata is invalid"));
+        }
+
+        DownloadRecord updated = *existing;
+        const auto updateString = [&body](const QString& key, QString& value) -> bool {
+            if (!body->contains(key))
+                return true;
+            if (!body->value(key).isString())
+                return false;
+            value = body->value(key).toString().trimmed();
+            return true;
+        };
+        if (!updateString(QStringLiteral("displayName"), updated.displayName) ||
+            !updateString(QStringLiteral("version"), updated.version) ||
+            !updateString(QStringLiteral("description"), updated.description) ||
+            !updateString(QStringLiteral("category"), updated.category)) {
+            return JsonError(Status(400), QStringLiteral("invalid_metadata"),
+                             QStringLiteral("Download metadata is invalid"));
+        }
+        if (body->contains(QStringLiteral("isActive"))) {
+            if (!body->value(QStringLiteral("isActive")).isBool())
+                return JsonError(Status(400), QStringLiteral("invalid_metadata"),
+                                 QStringLiteral("Download metadata is invalid"));
+            updated.active = body->value(QStringLiteral("isActive")).toBool();
+        }
+        if (!ValidSingleLineMetadata(updated.displayName, 1, 240) ||
+            !ValidSingleLineMetadata(updated.version, 0, 128) ||
+            !ValidDescription(updated.description) || !ValidDownloadCategory(updated.category)) {
+            return JsonError(Status(400), QStringLiteral("invalid_metadata"),
+                             QStringLiteral("Download metadata is invalid"));
+        }
+
+        QSqlQuery update(m_db->Conn());
+        update.prepare(QStringLiteral(
+            "UPDATE bloodborne_web_download SET display_name=?,version=?,description=?,category=?,"
+            "is_active=?,updated_at=? WHERE id=?"));
+        update.addBindValue(updated.displayName);
+        update.addBindValue(updated.version);
+        update.addBindValue(updated.description);
+        update.addBindValue(updated.category);
+        update.addBindValue(updated.active ? 1 : 0);
+        update.addBindValue(QDateTime::currentSecsSinceEpoch());
+        update.addBindValue(updated.id);
+        if (!update.exec() || update.numRowsAffected() != 1)
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to update download"));
+        const auto download = FindDownload(updated.id, true);
+        return download ? JsonData(DownloadObject(*download))
+                        : JsonError(Status(500), QStringLiteral("database_error"),
+                                    QStringLiteral("Unable to load updated download"));
+    }
+
+    QHttpServerResponse ApiAdminDownloadReplace(const QString& rawId,
+                                                const QHttpServerRequest& request) {
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!session->admin)
+            return JsonError(Status(403), QStringLiteral("admin_required"),
+                             QStringLiteral("Administrator access required"));
+        if (!SameOrigin(request) || !ValidCsrf(request, *session))
+            return JsonError(Status(403), QStringLiteral("csrf_rejected"),
+                             QStringLiteral("Request verification failed"));
+        const auto id = PositiveDownloadId(rawId);
+        const auto existing = id ? FindDownload(*id, true) : std::nullopt;
+        if (!existing)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+        if (request.body().size() > MaxDownloadFileBytes() + MaxDownloadMultipartOverhead)
+            return JsonError(Status(413), QStringLiteral("download_too_large"),
+                             QStringLiteral("Download file exceeds the configured limit"));
+        const auto form = ParseMultipart(request, MaxDownloadFileBytes());
+        if (!form || !form->hasFile || form->fileBytes.isEmpty() || !form->fields.isEmpty())
+            return JsonError(Status(400), QStringLiteral("invalid_upload"),
+                             QStringLiteral("A valid replacement file is required"));
+        if (HasUnsafeDownloadPathSyntax(form->fileName))
+            return JsonError(Status(400), QStringLiteral("unsafe_filename"),
+                             QStringLiteral("File name contains unsafe path syntax"));
+
+        const auto stored = StoreDownloadFile(form->fileBytes);
+        if (!stored)
+            return JsonError(Status(500), QStringLiteral("download_storage_failed"),
+                             QStringLiteral("Unable to store replacement"));
+        QSqlQuery update(m_db->Conn());
+        update.prepare(QStringLiteral(
+            "UPDATE bloodborne_web_download SET stored_filename=?,original_filename=?,file_size=?,"
+            "sha256=?,updated_at=? WHERE id=?"));
+        update.addBindValue(stored->first);
+        update.addBindValue(SanitizeDownloadFilename(form->fileName));
+        update.addBindValue(form->fileBytes.size());
+        update.addBindValue(stored->second);
+        update.addBindValue(QDateTime::currentSecsSinceEpoch());
+        update.addBindValue(existing->id);
+        if (!update.exec() || update.numRowsAffected() != 1) {
+            if (const auto path = DownloadPath(stored->first))
+                QFile::remove(*path);
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to replace download"));
+        }
+        if (const auto oldPath = DownloadPath(existing->storedFilename))
+            QFile::remove(*oldPath);
+        qInfo().noquote() << "[WEBSITE DOWNLOAD REPLACE]"
+                          << "admin=" + session->username << "id=" + QString::number(existing->id)
+                          << "bytes=" + QString::number(form->fileBytes.size());
+        const auto download = FindDownload(existing->id, true);
+        return download ? JsonData(DownloadObject(*download))
+                        : JsonError(Status(500), QStringLiteral("database_error"),
+                                    QStringLiteral("Unable to load replacement"));
+    }
+
+    QHttpServerResponse ApiAdminDownloadDelete(const QString& rawId,
+                                               const QHttpServerRequest& request) {
+        const auto session = Authenticate(request);
+        if (!session)
+            return JsonError(Status(401), QStringLiteral("authentication_required"),
+                             QStringLiteral("Authentication required"));
+        if (!session->admin)
+            return JsonError(Status(403), QStringLiteral("admin_required"),
+                             QStringLiteral("Administrator access required"));
+        if (!SameOrigin(request) || !ValidCsrf(request, *session))
+            return JsonError(Status(403), QStringLiteral("csrf_rejected"),
+                             QStringLiteral("Request verification failed"));
+        const auto id = PositiveDownloadId(rawId);
+        const auto existing = id ? FindDownload(*id, true) : std::nullopt;
+        if (!existing)
+            return JsonError(Status(404), QStringLiteral("download_not_found"),
+                             QStringLiteral("Download not found"));
+
+        QString tombstone;
+        const auto path = DownloadPath(existing->storedFilename, false);
+        if (!path)
+            return JsonError(Status(500), QStringLiteral("download_storage_failed"),
+                             QStringLiteral("Unable to resolve download storage"));
+        if (QFileInfo::exists(*path)) {
+            tombstone = *path + QStringLiteral(".deleting-") +
+                        QUuid::createUuid().toString(QUuid::WithoutBraces);
+            if (!QFile::rename(*path, tombstone))
+                return JsonError(Status(500), QStringLiteral("download_storage_failed"),
+                                 QStringLiteral("Unable to remove download"));
+        }
+        QSqlQuery remove(m_db->Conn());
+        remove.prepare(QStringLiteral("DELETE FROM bloodborne_web_download WHERE id=?"));
+        remove.addBindValue(existing->id);
+        if (!remove.exec() || remove.numRowsAffected() != 1) {
+            if (!tombstone.isEmpty())
+                QFile::rename(tombstone, *path);
+            return JsonError(Status(500), QStringLiteral("database_error"),
+                             QStringLiteral("Unable to delete download"));
+        }
+        if (!tombstone.isEmpty())
+            QFile::remove(tombstone);
+        qInfo().noquote() << "[WEBSITE DOWNLOAD DELETE]"
+                          << "admin=" + session->username << "id=" + QString::number(existing->id);
+        return JsonData(QJsonObject{});
+    }
+
     QHttpServerResponse ApiChatMessages(const QHttpServerRequest& request) const {
         if (!m_config->IsBloodborneWebsiteChatEnabled())
             return ChatDisabled();
@@ -1203,6 +1960,7 @@ private:
         QJsonObject data;
         data.insert(QStringLiteral("username"), user->username);
         data.insert(QStringLiteral("csrfToken"), QString::fromLatin1(CsrfToken(token)));
+        data.insert(QStringLiteral("isAdmin"), user->admin);
         return WithCookie(JsonData(data), SessionCookie(token, IsHttpsRequest(request)));
     }
 
@@ -1244,6 +2002,7 @@ private:
                              QStringLiteral("Unable to load account"));
         QJsonObject data = *player;
         data.insert(QStringLiteral("csrfToken"), QString::fromLatin1(session->csrf));
+        data.insert(QStringLiteral("isAdmin"), session->admin);
         return JsonData(data);
     }
 
@@ -1352,7 +2111,7 @@ private:
         const qint64 now = QDateTime::currentSecsSinceEpoch();
         QSqlQuery query(m_db->Conn());
         query.prepare(QStringLiteral(
-            "SELECT a.user_id,a.username,a.banned FROM bloodborne_web_session s "
+            "SELECT a.user_id,a.username,a.banned,a.admin FROM bloodborne_web_session s "
             "JOIN account a ON a.user_id=s.user_id WHERE s.token_hash=? AND s.expires_at>?"));
         query.addBindValue(HashToken(token));
         query.addBindValue(now);
@@ -1364,6 +2123,7 @@ private:
         session.username = query.value(1).toString();
         session.rawToken = token;
         session.csrf = CsrfToken(token);
+        session.admin = query.value(3).toBool();
 
         QSqlQuery touch(m_db->Conn());
         touch.prepare(
@@ -1648,6 +2408,7 @@ private:
     std::unique_ptr<QTimer> m_chatResetTimer;
     QString m_dataRoot;
     QString m_avatarDirectory;
+    QString m_downloadDirectory;
     QString m_externalAssetsRoot;
     bool m_externalAssetsActive = false;
     QMutex m_rateMutex;

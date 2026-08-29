@@ -182,6 +182,7 @@ BloodborneWebsiteChatEnabled=true
 BloodborneWebsiteChatMaxMessageLength=400
 BloodborneWebsiteChatHistoryLimit=100
 BloodborneWebsiteChatResetHours=24
+BloodborneWebsiteDownloadMaxFileSizeMiB=512
 StatsEnabled=false
 RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
 ```

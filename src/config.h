@@ -146,6 +146,10 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneWebsiteChatResetHours;
     }
+    int GetBloodborneWebsiteDownloadMaxFileSizeMiB() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteDownloadMaxFileSizeMiB;
+    }
 
     bool IsEmailValidated() const {
         QReadLocker lk(&m_lock);
@@ -224,6 +228,7 @@ private:
     int m_bloodborneWebsiteChatMaxMessageLength = 400;
     int m_bloodborneWebsiteChatHistoryLimit = 100;
     int m_bloodborneWebsiteChatResetHours = 24;
+    int m_bloodborneWebsiteDownloadMaxFileSizeMiB = 512;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute

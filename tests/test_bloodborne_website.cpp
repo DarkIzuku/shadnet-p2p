@@ -5,6 +5,8 @@
 #include <QBuffer>
 #include <QColor>
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QHash>
@@ -16,6 +18,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
 #include <QSqlQuery>
@@ -152,12 +155,65 @@ HttpResult Json(const BloodborneWebsiteServer &server, const QString &path,
               QByteArrayLiteral("application/json"), cookie, csrf);
 }
 
+HttpResult JsonMethod(const BloodborneWebsiteServer &server,
+                      const QString &path, const QByteArray &method,
+                      const QJsonObject &body, const QByteArray &cookie = {},
+                      const QByteArray &csrf = {}) {
+  return Send(Url(server, path), method,
+              QJsonDocument(body).toJson(QJsonDocument::Compact),
+              QByteArrayLiteral("application/json"), cookie, csrf);
+}
+
+QByteArray MultipartBody(const QByteArray &boundary,
+                         const QList<QPair<QByteArray, QByteArray>> &fields,
+                         const QByteArray &filename,
+                         const QByteArray &fileContents) {
+  QByteArray body;
+  for (const auto &field : fields) {
+    body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("\r\n");
+    body += QByteArrayLiteral("Content-Disposition: form-data; name=\"") +
+            field.first + QByteArrayLiteral("\"\r\n\r\n") + field.second +
+            QByteArrayLiteral("\r\n");
+  }
+  body += QByteArrayLiteral("--") + boundary + QByteArrayLiteral("\r\n");
+  body += QByteArrayLiteral(
+              "Content-Disposition: form-data; name=\"file\"; filename=\"") +
+          filename + QByteArrayLiteral("\"\r\n");
+  // Deliberately misleading: the server must inspect neither nor trust this
+  // value.
+  body += QByteArrayLiteral("Content-Type: image/png\r\n\r\n") + fileContents +
+          QByteArrayLiteral("\r\n--") + boundary + QByteArrayLiteral("--\r\n");
+  return body;
+}
+
+HttpResult UploadDownload(
+    const BloodborneWebsiteServer &server, const QByteArray &cookie,
+    const QByteArray &csrf, const QByteArray &filename,
+    const QByteArray &fileContents,
+    const QList<QPair<QByteArray, QByteArray>> &fields = {
+        {QByteArrayLiteral("displayName"), QByteArrayLiteral("Windows Server")},
+        {QByteArrayLiteral("version"), QByteArrayLiteral("1.2.3")},
+        {QByteArrayLiteral("category"), QByteArrayLiteral("Server")},
+        {QByteArrayLiteral("description"),
+         QByteArrayLiteral("Stable Windows package")},
+        {QByteArrayLiteral("isActive"), QByteArrayLiteral("true")},
+    }) {
+  const QByteArray boundary =
+      QByteArrayLiteral("----HunterRequiemBoundary7MA4YWxk");
+  return Send(Url(server, QStringLiteral("/api/admin/downloads")),
+              QByteArrayLiteral("POST"),
+              MultipartBody(boundary, fields, filename, fileContents),
+              QByteArrayLiteral("multipart/form-data; boundary=") + boundary,
+              cookie, csrf);
+}
+
 void WriteConfig(const QString &path, bool enabled, bool registrationEnabled,
                  bool externalAssetsEnabled = true,
                  const QString &externalAssetsPath =
                      QStringLiteral("website-assets-missing-for-tests"),
                  bool chatEnabled = true, int chatMaxMessageLength = 400,
-                 int chatHistoryLimit = 100, int chatResetHours = 24) {
+                 int chatHistoryLimit = 100, int chatResetHours = 24,
+                 int downloadMaxFileSizeMiB = 8) {
   QSettings settings(path, QSettings::IniFormat);
   settings.setValue(QStringLiteral("Host"), QStringLiteral("127.0.0.1"));
   settings.setValue(QStringLiteral("WebApiPort"), QStringLiteral("31315"));
@@ -178,6 +234,8 @@ void WriteConfig(const QString &path, bool enabled, bool registrationEnabled,
                     chatHistoryLimit);
   settings.setValue(QStringLiteral("BloodborneWebsiteChatResetHours"),
                     chatResetHours);
+  settings.setValue(QStringLiteral("BloodborneWebsiteDownloadMaxFileSizeMiB"),
+                    downloadMaxFileSizeMiB);
   settings.sync();
 }
 
@@ -298,6 +356,8 @@ int main(int argc, char *argv[]) {
   CHECK(home.body.contains("/assets/requiem-emblem.png"));
   CHECK(home.body.contains("/assets/favicon.png"));
   CHECK(home.body.contains("/communion"));
+  CHECK(home.body.contains("/downloads"));
+  CHECK(home.body.contains("/admin/downloads"));
   CHECK(HasHeader(home, QByteArrayLiteral("X-Content-Type-Options"),
                   QByteArrayLiteral("nosniff")));
   CHECK(HasHeader(home, QByteArrayLiteral("X-Frame-Options"),
@@ -319,6 +379,12 @@ int main(int argc, char *argv[]) {
   CHECK(script.body.contains("Mazmorras de Cáliz"));
   CHECK(script.body.contains("Map data not yet decoded"));
   CHECK(script.body.contains("Los datos del mapa aún no están decodificados"));
+  CHECK(script.body.contains(
+      "Official files shared by this server's administrators."));
+  CHECK(script.body.contains(
+      "Archivos oficiales compartidos por los administradores"));
+  CHECK(script.body.contains("/api/admin/downloads"));
+  CHECK(script.body.contains("state.account?.isAdmin"));
   CHECK(script.body.contains("password-eye"));
 
   const HttpResult style = Send(Url(server, QStringLiteral("/assets/site.css")),
@@ -327,10 +393,18 @@ int main(int argc, char *argv[]) {
   CHECK(style.body.contains(".chat-panel"));
   CHECK(style.body.contains(".chalice-table"));
   CHECK(style.body.contains(".dungeon-map-placeholder"));
+  CHECK(style.body.contains(".downloads-grid"));
+  CHECK(style.body.contains(".admin-download-form"));
   CHECK(style.body.contains(".password-eye"));
   CHECK(Send(Url(server, QStringLiteral("/assets/favicon.png")),
              QByteArrayLiteral("GET"))
             .status == 200);
+  CHECK(
+      Send(Url(server, QStringLiteral("/downloads")), QByteArrayLiteral("GET"))
+          .status == 200);
+  CHECK(Send(Url(server, QStringLiteral("/admin/downloads")),
+             QByteArrayLiteral("GET"))
+            .status == 401);
 
   const HttpResult initialChat =
       Send(Url(server, QStringLiteral("/api/chat/messages")),
@@ -378,6 +452,23 @@ int main(int argc, char *argv[]) {
   CHECK(!account->salt.isEmpty());
   CHECK(!account->hash.isEmpty());
   CHECK(!account->token.isEmpty());
+  CHECK(verification.SetAdmin(account->userId, true));
+  {
+    QSqlQuery migration(verification.Conn());
+    CHECK(migration.exec(QStringLiteral(
+        "SELECT COUNT(*) FROM migration WHERE migration_id=9 AND "
+        "description='The Hunter Requiem downloads catalog'")));
+    CHECK(migration.next());
+    CHECK(migration.value(0).toInt() == 1);
+    CHECK(migration.exec(QStringLiteral(
+        "SELECT COUNT(*) FROM pragma_table_info('bloodborne_web_download') "
+        "WHERE name IN "
+        "('id','display_name','stored_filename','original_filename',"
+        "'version','description','category','file_size','sha256','created_at',"
+        "'updated_at','is_active','download_count')")));
+    CHECK(migration.next());
+    CHECK(migration.value(0).toInt() == 13);
+  }
 
   const HttpResult badLogin =
       Json(server, QStringLiteral("/api/login"),
@@ -407,6 +498,231 @@ int main(int argc, char *argv[]) {
   CHECK(webAccount.status == 200);
   CHECK(Data(webAccount).value(QStringLiteral("username")).toString() ==
         QStringLiteral("Izuku"));
+  CHECK(Data(webAccount).value(QStringLiteral("isAdmin")).toBool());
+
+  const QJsonObject normalRegistration = {
+      {QStringLiteral("username"), QStringLiteral("NormalHunter")},
+      {QStringLiteral("password"), QStringLiteral("NormalPass123")},
+      {QStringLiteral("confirmPassword"), QStringLiteral("NormalPass123")},
+  };
+  CHECK(Json(server, QStringLiteral("/api/register"), normalRegistration)
+            .status == 201);
+  const HttpResult normalLogin =
+      Json(server, QStringLiteral("/api/login"),
+           {{QStringLiteral("username"), QStringLiteral("NormalHunter")},
+            {QStringLiteral("password"), QStringLiteral("NormalPass123")}});
+  CHECK(normalLogin.status == 200);
+  const QByteArray normalCsrf = Data(normalLogin)
+                                    .value(QStringLiteral("csrfToken"))
+                                    .toString()
+                                    .toLatin1();
+  const HttpResult normalAccount =
+      Send(Url(server, QStringLiteral("/api/account")),
+           QByteArrayLiteral("GET"), {}, {}, normalLogin.cookie);
+  CHECK(normalAccount.status == 200);
+  CHECK(!Data(normalAccount).value(QStringLiteral("isAdmin")).toBool());
+  CHECK(Send(Url(server, QStringLiteral("/admin/downloads")),
+             QByteArrayLiteral("GET"), {}, {}, normalLogin.cookie)
+            .status == 403);
+  CHECK(Send(Url(server, QStringLiteral("/admin/downloads")),
+             QByteArrayLiteral("GET"), {}, {}, login.cookie)
+            .status == 200);
+
+  const QByteArray packageBytes =
+      QByteArrayLiteral("MZ\x00shadNet Windows package\nnot-a-browser-image");
+  CHECK(UploadDownload(server, {}, {}, QByteArrayLiteral("visitor.zip"),
+                       packageBytes)
+            .status == 401);
+  CHECK(UploadDownload(server, normalLogin.cookie, normalCsrf,
+                       QByteArrayLiteral("normal.zip"), packageBytes)
+            .status == 403);
+  CHECK(UploadDownload(server, login.cookie, QByteArrayLiteral("wrong-csrf"),
+                       QByteArrayLiteral("wrong.zip"), packageBytes)
+            .status == 403);
+  const HttpResult traversal =
+      UploadDownload(server, login.cookie, csrf,
+                     QByteArrayLiteral("../escape.zip"), packageBytes);
+  CHECK(traversal.status == 400);
+  CHECK(Error(traversal).value(QStringLiteral("code")).toString() ==
+        QStringLiteral("unsafe_filename"));
+  CHECK(QDir(temporary.filePath(QStringLiteral("data/downloads")))
+            .entryList(QDir::Files | QDir::NoDotAndDotDot)
+            .isEmpty());
+
+  const HttpResult uploaded =
+      UploadDownload(server, login.cookie, csrf,
+                     QByteArrayLiteral("server<script>.zip"), packageBytes);
+  CHECK(uploaded.status == 201);
+  const QJsonObject uploadedDownload = Data(uploaded);
+  const qint64 downloadId =
+      uploadedDownload.value(QStringLiteral("id")).toVariant().toLongLong();
+  CHECK(downloadId > 0);
+  CHECK(uploadedDownload.value(QStringLiteral("originalFilename")).toString() ==
+        QStringLiteral("server_script_.zip"));
+  const QString packageSha = QString::fromLatin1(
+      QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256)
+          .toHex());
+  CHECK(uploadedDownload.value(QStringLiteral("sha256")).toString() ==
+        packageSha);
+  CHECK(uploadedDownload.value(QStringLiteral("fileSize"))
+            .toVariant()
+            .toLongLong() == packageBytes.size());
+  CHECK(!uploaded.body.contains("stored_filename"));
+  CHECK(!uploaded.body.contains("data/downloads"));
+  CHECK(!uploaded.body.contains(dbPath.toUtf8()));
+
+  QString firstStoredFilename;
+  {
+    QSqlQuery stored(verification.Conn());
+    stored.prepare(QStringLiteral("SELECT stored_filename,original_filename "
+                                  "FROM bloodborne_web_download WHERE id=?"));
+    stored.addBindValue(downloadId);
+    CHECK(stored.exec());
+    CHECK(stored.next());
+    firstStoredFilename = stored.value(0).toString();
+    CHECK(
+        QRegularExpression(QStringLiteral("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{"
+                                          "3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+            .match(firstStoredFilename)
+            .hasMatch());
+    CHECK(QFileInfo::exists(temporary.filePath(
+        QStringLiteral("data/downloads/") + firstStoredFilename)));
+  }
+
+  const HttpResult publicDownloads = Send(
+      Url(server, QStringLiteral("/api/downloads")), QByteArrayLiteral("GET"));
+  CHECK(publicDownloads.status == 200);
+  CHECK(Data(publicDownloads).value(QStringLiteral("total")).toInt() == 1);
+  CHECK(Data(publicDownloads)
+            .value(QStringLiteral("downloads"))
+            .toArray()
+            .first()
+            .toObject()
+            .value(QStringLiteral("id"))
+            .toVariant()
+            .toLongLong() == downloadId);
+  CHECK(!publicDownloads.body.contains("stored_filename"));
+  CHECK(!publicDownloads.body.contains(firstStoredFilename.toUtf8()));
+  const QString downloadApiPath =
+      QStringLiteral("/api/downloads/%1").arg(downloadId);
+  CHECK(Send(Url(server, downloadApiPath), QByteArrayLiteral("GET")).status ==
+        200);
+  CHECK(Send(Url(server, QStringLiteral("/api/admin/downloads")),
+             QByteArrayLiteral("GET"), {}, {}, normalLogin.cookie)
+            .status == 403);
+  CHECK(Send(Url(server, QStringLiteral("/api/admin/downloads")),
+             QByteArrayLiteral("GET"), {}, {}, login.cookie)
+            .status == 200);
+
+  const QString filePath = QStringLiteral("/downloads/file/%1").arg(downloadId);
+  const HttpResult downloaded =
+      Send(Url(server, filePath), QByteArrayLiteral("GET"));
+  CHECK(downloaded.status == 200);
+  CHECK(downloaded.body == packageBytes);
+  CHECK(HasHeader(downloaded, QByteArrayLiteral("Content-Type"),
+                  QByteArrayLiteral("application/octet-stream")));
+  CHECK(HasHeader(downloaded, QByteArrayLiteral("Content-Disposition"),
+                  QByteArrayLiteral("attachment;")));
+  CHECK(HasHeader(downloaded, QByteArrayLiteral("Content-Disposition"),
+                  QByteArrayLiteral("server_script_.zip")));
+  const HttpResult afterDownload =
+      Send(Url(server, downloadApiPath), QByteArrayLiteral("GET"));
+  CHECK(Data(afterDownload).value(QStringLiteral("downloadCount")).toInt() ==
+        1);
+
+  const HttpResult disabledDownload = JsonMethod(
+      server, QStringLiteral("/api/admin/downloads/%1").arg(downloadId),
+      QByteArrayLiteral("PUT"), {{QStringLiteral("isActive"), false}},
+      login.cookie, csrf);
+  CHECK(disabledDownload.status == 200);
+  CHECK(!Data(disabledDownload).value(QStringLiteral("isActive")).toBool());
+  CHECK(Data(Send(Url(server, QStringLiteral("/api/downloads")),
+                  QByteArrayLiteral("GET")))
+            .value(QStringLiteral("total"))
+            .toInt() == 0);
+  CHECK(Send(Url(server, downloadApiPath), QByteArrayLiteral("GET")).status ==
+        404);
+  CHECK(Send(Url(server, filePath), QByteArrayLiteral("GET")).status == 404);
+
+  const HttpResult enabledDownload = JsonMethod(
+      server, QStringLiteral("/api/admin/downloads/%1").arg(downloadId),
+      QByteArrayLiteral("PUT"),
+      {{QStringLiteral("displayName"),
+        QStringLiteral("Windows Server Updated")},
+       {QStringLiteral("version"), QStringLiteral("2.0.0")},
+       {QStringLiteral("category"), QStringLiteral("Server")},
+       {QStringLiteral("description"), QStringLiteral("Updated package")},
+       {QStringLiteral("isActive"), true}},
+      login.cookie, csrf);
+  CHECK(enabledDownload.status == 200);
+  CHECK(Data(enabledDownload).value(QStringLiteral("displayName")).toString() ==
+        QStringLiteral("Windows Server Updated"));
+  CHECK(Data(enabledDownload).value(QStringLiteral("isActive")).toBool());
+
+  const QByteArray replacementBytes =
+      QByteArrayLiteral("PK\x03\x04replacement shadNet package");
+  const QByteArray replaceBoundary =
+      QByteArrayLiteral("----HunterRequiemReplacementBoundary");
+  const HttpResult replaced = Send(
+      Url(server,
+          QStringLiteral("/api/admin/downloads/%1/replace").arg(downloadId)),
+      QByteArrayLiteral("POST"),
+      MultipartBody(replaceBoundary, {}, QByteArrayLiteral("shadnet-win64.zip"),
+                    replacementBytes),
+      QByteArrayLiteral("multipart/form-data; boundary=") + replaceBoundary,
+      login.cookie, csrf);
+  CHECK(replaced.status == 200);
+  CHECK(Data(replaced).value(QStringLiteral("originalFilename")).toString() ==
+        QStringLiteral("shadnet-win64.zip"));
+  CHECK(Data(replaced).value(QStringLiteral("sha256")).toString() ==
+        QString::fromLatin1(QCryptographicHash::hash(replacementBytes,
+                                                     QCryptographicHash::Sha256)
+                                .toHex()));
+  CHECK(!QFileInfo::exists(temporary.filePath(
+      QStringLiteral("data/downloads/") + firstStoredFilename)));
+  CHECK(Send(Url(server, filePath), QByteArrayLiteral("GET")).body ==
+        replacementBytes);
+
+  QString replacementStoredFilename;
+  {
+    QSqlQuery stored(verification.Conn());
+    stored.prepare(QStringLiteral(
+        "SELECT stored_filename FROM bloodborne_web_download WHERE id=?"));
+    stored.addBindValue(downloadId);
+    CHECK(stored.exec());
+    CHECK(stored.next());
+    replacementStoredFilename = stored.value(0).toString();
+    CHECK(replacementStoredFilename != firstStoredFilename);
+    CHECK(QFileInfo::exists(temporary.filePath(
+        QStringLiteral("data/downloads/") + replacementStoredFilename)));
+  }
+
+  server.Stop();
+  CHECK(server.Start(&config, dbPath, &shared));
+  CHECK(server.IsListening());
+  CHECK(Send(Url(server, filePath), QByteArrayLiteral("GET")).body ==
+        replacementBytes);
+  CHECK(QFileInfo::exists(temporary.filePath(
+      QStringLiteral("data/downloads/") + replacementStoredFilename)));
+
+  const HttpResult deleted = Send(
+      Url(server, QStringLiteral("/api/admin/downloads/%1").arg(downloadId)),
+      QByteArrayLiteral("DELETE"), {}, {}, login.cookie, csrf);
+  CHECK(deleted.status == 200);
+  CHECK(Send(Url(server, downloadApiPath), QByteArrayLiteral("GET")).status ==
+        404);
+  CHECK(!QFileInfo::exists(temporary.filePath(
+      QStringLiteral("data/downloads/") + replacementStoredFilename)));
+  CHECK(QDir(temporary.filePath(QStringLiteral("data/downloads")))
+            .entryList(QDir::Files | QDir::NoDotAndDotDot)
+            .isEmpty());
+  {
+    QSqlQuery count(verification.Conn());
+    CHECK(count.exec(
+        QStringLiteral("SELECT COUNT(*) FROM bloodborne_web_download")));
+    CHECK(count.next());
+    CHECK(count.value(0).toInt() == 0);
+  }
 
   const auto seedChalice =
       [&](const QString &glyph, qint64 creator, int shareLevel, int ritualLevel,

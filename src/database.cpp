@@ -591,6 +591,38 @@ bool Database::Migrate() {
                       << "existing=" + QString::number(existingFixedCount)
                       << "remapped_community_ids=" + QString::number(remappedCommunityIds);
 
+    // Migration 9 stores only public download metadata. The files themselves live outside
+    // SQLite in data/downloads and are reachable only through the validated ID route.
+    const QStringList stmts9 = {
+        "CREATE TABLE IF NOT EXISTS bloodborne_web_download("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  display_name TEXT NOT NULL,"
+        "  stored_filename TEXT NOT NULL UNIQUE,"
+        "  original_filename TEXT NOT NULL,"
+        "  version TEXT NOT NULL DEFAULT '',"
+        "  description TEXT NOT NULL DEFAULT '',"
+        "  category TEXT NOT NULL,"
+        "  file_size INTEGER NOT NULL CHECK(file_size>=0),"
+        "  sha256 TEXT NOT NULL CHECK(length(sha256)=64),"
+        "  created_at INTEGER NOT NULL,"
+        "  updated_at INTEGER NOT NULL,"
+        "  is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),"
+        "  download_count INTEGER NOT NULL DEFAULT 0 CHECK(download_count>=0))",
+        "CREATE INDEX IF NOT EXISTS bloodborne_web_download_public "
+        "ON bloodborne_web_download(is_active,updated_at DESC,id DESC)",
+        "CREATE INDEX IF NOT EXISTS bloodborne_web_download_category "
+        "ON bloodborne_web_download(category,is_active,updated_at DESC)",
+    };
+    for (const QString& statement : stmts9) {
+        if (!Exec(statement))
+            return false;
+    }
+    QSqlQuery ins9(m_db);
+    ins9.prepare(
+        "INSERT OR IGNORE INTO migration VALUES(9,'The Hunter Requiem downloads catalog')");
+    if (!Exec(ins9))
+        return false;
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();

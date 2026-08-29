@@ -59,7 +59,21 @@
       channelId: "ChannelId", created: "Created", lastPlayed: "Last played",
       formDataVersion: "FormDataVersion", formDataBytes: "FormData size", bytes: "bytes",
       dungeonMap: "Dungeon Map", mapPending: "Map data not yet decoded",
-      backToChalices: "Back to Chalices"
+      backToChalices: "Back to Chalices", downloads: "Downloads",
+      downloadsTitle: "Downloads", downloadsLead: "Official files shared by this server's administrators.",
+      availableDownloads: "Available Downloads", noDownloads: "No downloads are available yet.",
+      latestDownloads: "Latest Downloads", viewAllDownloads: "View all downloads",
+      name: "Name", version: "Version", category: "Category", allCategories: "All categories",
+      description: "Description", file: "File", fileName: "File name", size: "Size",
+      sha256: "SHA-256", download: "Download", downloadCount: "Downloads", updated: "Updated",
+      manageDownloads: "Manage Downloads", adminDownloadsTitle: "Manage Downloads",
+      adminDownloadsLead: "Upload files and control what visitors can download.",
+      active: "Active", inactive: "Inactive", uploadDownload: "Upload Download",
+      edit: "Edit", replace: "Replace", disable: "Disable", enable: "Enable", delete: "Delete",
+      save: "Save", cancel: "Cancel", chooseFile: "Choose a file first.",
+      uploadComplete: "Download uploaded.", updateComplete: "Download updated.",
+      replaceComplete: "File replaced.", deleteComplete: "Download deleted.",
+      confirmDelete: "Delete this download and its stored file?", adminOnly: "Administrator access required."
     },
     es: {
       menu: "Menú", home: "Inicio", hunters: "Cazadores", stats: "Estadísticas", register: "Registro",
@@ -116,7 +130,21 @@
       channelId: "ChannelId", created: "Creado", lastPlayed: "Última partida",
       formDataVersion: "FormDataVersion", formDataBytes: "Tamaño de FormData", bytes: "bytes",
       dungeonMap: "Mapa de la mazmorra", mapPending: "Los datos del mapa aún no están decodificados",
-      backToChalices: "Volver a Cálices"
+      backToChalices: "Volver a Cálices", downloads: "Descargas",
+      downloadsTitle: "Descargas", downloadsLead: "Archivos oficiales compartidos por los administradores de este servidor.",
+      availableDownloads: "Descargas disponibles", noDownloads: "Todavía no hay descargas disponibles.",
+      latestDownloads: "Últimas descargas", viewAllDownloads: "Ver todas las descargas",
+      name: "Nombre", version: "Versión", category: "Categoría", allCategories: "Todas las categorías",
+      description: "Descripción", file: "Archivo", fileName: "Nombre de archivo", size: "Tamaño",
+      sha256: "SHA-256", download: "Descargar", downloadCount: "Descargas", updated: "Actualizado",
+      manageDownloads: "Gestionar descargas", adminDownloadsTitle: "Gestionar descargas",
+      adminDownloadsLead: "Sube archivos y controla cuáles pueden descargar los visitantes.",
+      active: "Activo", inactive: "Inactivo", uploadDownload: "Subir descarga",
+      edit: "Editar", replace: "Reemplazar", disable: "Desactivar", enable: "Activar", delete: "Borrar",
+      save: "Guardar", cancel: "Cancelar", chooseFile: "Primero elige un archivo.",
+      uploadComplete: "Descarga subida.", updateComplete: "Descarga actualizada.",
+      replaceComplete: "Archivo reemplazado.", deleteComplete: "Descarga borrada.",
+      confirmDelete: "¿Borrar esta descarga y su archivo guardado?", adminOnly: "Se requiere acceso de administrador."
     }
   };
 
@@ -172,6 +200,16 @@
 
   function formatNumber(value) {
     return new Intl.NumberFormat(state.language === "es" ? "es-ES" : "en-US").format(Number(value || 0));
+  }
+
+  function formatBytes(value) {
+    let bytes = Math.max(0, Number(value || 0));
+    const units = ["B", "KiB", "MiB", "GiB"];
+    let unit = 0;
+    while (bytes >= 1024 && unit < units.length - 1) { bytes /= 1024; unit += 1; }
+    return `${new Intl.NumberFormat(state.language === "es" ? "es-ES" : "en-US", {
+      maximumFractionDigits: unit === 0 ? 0 : 1
+    }).format(bytes)} ${units[unit]}`;
   }
 
   function formatDuration(seconds) {
@@ -315,6 +353,37 @@
     page.append(node("p", "page-lead", t(leadKey)));
   }
 
+  function downloadCard(download, compact = false) {
+    const card = node("article", `download-card${compact ? " compact" : ""}`);
+    const heading = node("div", "download-heading");
+    const identity = node("div", "download-identity");
+    identity.append(node("h2", "download-name", download.displayName));
+    const badges = node("div", "download-badges");
+    badges.append(node("span", "download-category", download.category));
+    if (download.version) badges.append(node("span", "download-version", `v${download.version}`));
+    identity.append(badges);
+    const action = node("a", "button primary download-button", t("download"));
+    action.href = download.downloadUrl;
+    action.setAttribute("download", download.originalFilename || "");
+    heading.append(identity, action);
+    card.append(heading);
+    if (download.description) card.append(node("p", "download-description", download.description));
+
+    const details = node("dl", "download-details");
+    const item = (label, value, className = "") => {
+      const wrapper = node("div", `download-detail ${className}`.trim());
+      wrapper.append(node("dt", "", t(label)), node("dd", "", value));
+      details.append(wrapper);
+    };
+    item("fileName", download.originalFilename);
+    item("size", formatBytes(download.fileSize));
+    item("updated", dateText(download.updatedAt));
+    item("downloadCount", formatNumber(download.downloadCount));
+    if (!compact) item("sha256", download.sha256, "download-hash");
+    card.append(details);
+    return card;
+  }
+
   function showError(error) {
     const page = setPage();
     page.append(node("h1", "page-title", t("unavailable")));
@@ -352,8 +421,9 @@
     const enter = node("a", "button", t("enterDream")); enter.href = state.account ? "/account" : "/login";
     actions.append(register, enter); hero.append(actions); page.append(hero);
 
-    const [status, playersData, activityData] = await Promise.all([
-      api("/api/status"), api("/api/players?online=true&limit=6"), api("/api/activity?limit=6")
+    const [status, playersData, activityData, downloadsData] = await Promise.all([
+      api("/api/status"), api("/api/players?online=true&limit=6"), api("/api/activity?limit=6"),
+      api("/api/downloads?limit=3")
     ]);
     state.websiteStatus = status;
     state.chatEnabled = status.chatEnabled === true;
@@ -393,7 +463,20 @@
     const onlineList = node("div", "list");
     if (!playersData.players.length) onlineList.append(node("div", "empty-state", t("noHuntersOnline")));
     playersData.players.forEach((player) => onlineList.append(playerRow(player)));
-    onlinePanel.append(onlineList); grid.append(activityPanel, onlinePanel); page.append(grid);
+    onlinePanel.append(onlineList); grid.append(activityPanel, onlinePanel);
+    if (downloadsData.downloads.length) {
+      const downloadsPanel = node("section", "panel home-downloads");
+      const downloadsHeader = node("div", "panel-header");
+      downloadsHeader.append(node("h2", "", t("latestDownloads")));
+      const allDownloads = node("a", "", t("viewAllDownloads"));
+      allDownloads.href = "/downloads";
+      downloadsHeader.append(allDownloads);
+      const latest = node("div", "latest-download-grid");
+      downloadsData.downloads.forEach((download) => latest.append(downloadCard(download, true)));
+      downloadsPanel.append(downloadsHeader, latest);
+      grid.append(downloadsPanel);
+    }
+    page.append(grid);
     const definition = node("p", "metrics-definition", t("exactMetrics")); page.append(definition);
   }
 
@@ -564,6 +647,207 @@
     map.append(node("h2", "", t("dungeonMap")), node("div", "map-sigil", "◇"),
       node("p", "", t("mapPending")));
     page.append(map);
+  }
+
+  async function renderDownloads() {
+    const page = setPage("page inner-page downloads-page");
+    titleBlock(page, "downloadsTitle", "downloadsLead");
+    const current = new URLSearchParams(location.search);
+    current.set("limit", "24");
+    const result = await api(`/api/downloads?${current}`);
+
+    const toolbar = node("div", "downloads-toolbar");
+    const categoryLabel = node("label", "filter-field");
+    categoryLabel.append(node("span", "", t("category")));
+    const category = document.createElement("select");
+    category.append(new Option(t("allCategories"), ""));
+    result.categories.forEach((value) => category.append(new Option(value, value)));
+    category.value = new URLSearchParams(location.search).get("category") || "";
+    category.addEventListener("change", () => {
+      const query = new URLSearchParams();
+      if (category.value) query.set("category", category.value);
+      history.pushState({}, "", `/downloads${query.size ? `?${query}` : ""}`);
+      renderRoute();
+    });
+    categoryLabel.append(category);
+    const summary = node("div", "downloads-summary");
+    summary.append(node("span", "", t("availableDownloads")),
+      node("strong", "", formatNumber(result.total)));
+    toolbar.append(categoryLabel, summary);
+    page.append(toolbar);
+
+    const grid = node("section", "downloads-grid");
+    if (!result.downloads.length) grid.append(node("div", "empty-state", t("noDownloads")));
+    result.downloads.forEach((download) => grid.append(downloadCard(download)));
+    page.append(grid);
+
+    if (result.pages > 1) {
+      const pagination = node("nav", "pagination");
+      const pageLink = (label, target, disabled) => {
+        const link = node("a", `button quiet${disabled ? " disabled" : ""}`, label);
+        if (!disabled) {
+          const query = new URLSearchParams(location.search);
+          query.set("page", String(target));
+          link.href = `/downloads?${query}`;
+        }
+        return link;
+      };
+      pagination.append(pageLink(t("previous"), result.page - 1, result.page <= 1),
+        node("span", "", t("pageOf", { page: result.page, pages: result.pages })),
+        pageLink(t("next"), result.page + 1, result.page >= result.pages));
+      page.append(pagination);
+    }
+  }
+
+  function adminDownloadForm(categories, download = null, includeFile = false) {
+    const form = node("form", "admin-download-form");
+    const makeField = (labelKey, name, kind = "input") => {
+      const wrapper = node("label", "field");
+      wrapper.append(node("span", "", t(labelKey)));
+      const input = document.createElement(kind);
+      input.name = name;
+      wrapper.append(input);
+      return { wrapper, input };
+    };
+    const name = makeField("name", "displayName");
+    name.input.required = true; name.input.maxLength = 120; name.input.value = download?.displayName || "";
+    const version = makeField("version", "version");
+    version.input.maxLength = 64; version.input.value = download?.version || "";
+    const category = makeField("category", "category", "select");
+    categories.forEach((value) => category.input.append(new Option(value, value)));
+    category.input.value = download?.category || categories[0] || "Other";
+    const description = makeField("description", "description", "textarea");
+    description.input.maxLength = 4000; description.input.rows = 4;
+    description.input.value = download?.description || "";
+    form.append(name.wrapper, version.wrapper, category.wrapper, description.wrapper);
+
+    let file = null;
+    if (includeFile) {
+      const fileField = makeField("file", "file");
+      fileField.input.type = "file"; fileField.input.required = true;
+      file = fileField.input;
+      form.append(fileField.wrapper);
+    }
+    const activeLabel = node("label", "checkbox-field");
+    const active = document.createElement("input");
+    active.type = "checkbox"; active.name = "isActive";
+    active.checked = download ? download.isActive === true : true;
+    activeLabel.append(active, node("span", "", t("active")));
+    form.append(activeLabel);
+    return { form, name: name.input, version: version.input, category: category.input,
+      description: description.input, active, file };
+  }
+
+  async function renderAdminDownloads() {
+    if (!state.account?.isAdmin) throw Object.assign(new Error(t("adminOnly")), { status: 403 });
+    const result = await api("/api/admin/downloads");
+    const page = setPage("page inner-page admin-downloads-page");
+    titleBlock(page, "adminDownloadsTitle", "adminDownloadsLead");
+
+    const uploadPanel = node("section", "panel admin-upload-panel");
+    const uploadHeader = node("div", "panel-header");
+    uploadHeader.append(node("h2", "", t("uploadDownload")));
+    const upload = adminDownloadForm(result.categories, null, true);
+    const uploadButton = node("button", "button primary", t("uploadDownload"));
+    uploadButton.type = "submit";
+    const uploadMessage = node("p", "form-message");
+    upload.form.append(uploadButton, uploadMessage);
+    upload.form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!upload.file?.files?.[0]) {
+        uploadMessage.className = "form-message error"; uploadMessage.textContent = t("chooseFile"); return;
+      }
+      uploadButton.disabled = true; uploadMessage.textContent = "";
+      const body = new FormData(upload.form);
+      body.set("isActive", upload.active.checked ? "true" : "false");
+      try {
+        await api("/api/admin/downloads", { method: "POST",
+          headers: { "X-CSRF-Token": state.account.csrfToken }, body });
+        uploadMessage.className = "form-message success"; uploadMessage.textContent = t("uploadComplete");
+        setTimeout(renderRoute, 250);
+      } catch (error) {
+        uploadMessage.className = "form-message error"; uploadMessage.textContent = error.message;
+        uploadButton.disabled = false;
+      }
+    });
+    uploadPanel.append(uploadHeader, upload.form);
+    page.append(uploadPanel);
+
+    const list = node("section", "admin-download-list");
+    if (!result.downloads.length) list.append(node("div", "empty-state", t("noDownloads")));
+    result.downloads.forEach((download) => {
+      const card = node("article", `admin-download-row${download.isActive ? "" : " inactive"}`);
+      const identity = node("div", "admin-download-identity");
+      identity.append(node("h2", "download-name", download.displayName),
+        node("p", "list-meta", `${download.category} · ${download.version || "—"} · ${formatBytes(download.fileSize)}`),
+        node("code", "download-sha", download.sha256),
+        node("span", "download-state", t(download.isActive ? "active" : "inactive")));
+      const actions = node("div", "download-admin-actions");
+      const editButton = node("button", "button quiet", t("edit")); editButton.type = "button";
+      const replaceButton = node("button", "button quiet", t("replace")); replaceButton.type = "button";
+      const toggleButton = node("button", "button quiet", t(download.isActive ? "disable" : "enable")); toggleButton.type = "button";
+      const deleteButton = node("button", "button danger", t("delete")); deleteButton.type = "button";
+      actions.append(editButton, replaceButton, toggleButton, deleteButton);
+      card.append(identity, actions);
+
+      const edit = adminDownloadForm(result.categories, download, false);
+      edit.form.classList.add("inline-edit-form"); edit.form.hidden = true;
+      const editActions = node("div", "download-admin-actions");
+      const save = node("button", "button primary", t("save")); save.type = "submit";
+      const cancel = node("button", "button quiet", t("cancel")); cancel.type = "button";
+      const message = node("p", "form-message");
+      const actionMessage = node("p", "form-message admin-action-message");
+      editActions.append(save, cancel); edit.form.append(editActions, message); card.append(edit.form);
+      card.append(actionMessage);
+      editButton.addEventListener("click", () => { edit.form.hidden = !edit.form.hidden; });
+      cancel.addEventListener("click", () => { edit.form.hidden = true; });
+      edit.form.addEventListener("submit", async (event) => {
+        event.preventDefault(); save.disabled = true;
+        try {
+          await api(`/api/admin/downloads/${download.id}`, { method: "PUT",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": state.account.csrfToken },
+            body: JSON.stringify({ displayName: edit.name.value, version: edit.version.value,
+              category: edit.category.value, description: edit.description.value,
+              isActive: edit.active.checked }) });
+          message.className = "form-message success"; message.textContent = t("updateComplete");
+          setTimeout(renderRoute, 200);
+        } catch (error) { message.className = "form-message error"; message.textContent = error.message; save.disabled = false; }
+      });
+
+      const replacement = document.createElement("input");
+      replacement.type = "file"; replacement.hidden = true; card.append(replacement);
+      replaceButton.addEventListener("click", () => replacement.click());
+      replacement.addEventListener("change", async () => {
+        if (!replacement.files?.[0]) return;
+        replaceButton.disabled = true;
+        const body = new FormData(); body.append("file", replacement.files[0]);
+        try {
+          await api(`/api/admin/downloads/${download.id}/replace`, { method: "POST",
+            headers: { "X-CSRF-Token": state.account.csrfToken }, body });
+          setTimeout(renderRoute, 150);
+        } catch (error) { actionMessage.className = "form-message error admin-action-message"; actionMessage.textContent = error.message; replaceButton.disabled = false; }
+      });
+      toggleButton.addEventListener("click", async () => {
+        toggleButton.disabled = true;
+        try {
+          await api(`/api/admin/downloads/${download.id}`, { method: "PUT",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": state.account.csrfToken },
+            body: JSON.stringify({ isActive: !download.isActive }) });
+          renderRoute();
+        } catch (error) { actionMessage.className = "form-message error admin-action-message"; actionMessage.textContent = error.message; toggleButton.disabled = false; }
+      });
+      deleteButton.addEventListener("click", async () => {
+        if (!confirm(t("confirmDelete"))) return;
+        deleteButton.disabled = true;
+        try {
+          await api(`/api/admin/downloads/${download.id}`, { method: "DELETE",
+            headers: { "X-CSRF-Token": state.account.csrfToken } });
+          renderRoute();
+        } catch (error) { actionMessage.className = "form-message error admin-action-message"; actionMessage.textContent = error.message; deleteButton.disabled = false; }
+      });
+      list.append(card);
+    });
+    page.append(list);
   }
 
   function stopChatPolling() {
@@ -866,10 +1150,13 @@
 
   function updateAuthNav() {
     const link = document.querySelector("[data-auth-link]");
-    if (!link) return;
-    link.href = state.account ? "/account" : "/login";
-    link.dataset.i18n = state.account ? "account" : "login";
-    link.textContent = t(link.dataset.i18n);
+    if (link) {
+      link.href = state.account ? "/account" : "/login";
+      link.dataset.i18n = state.account ? "account" : "login";
+      link.textContent = t(link.dataset.i18n);
+    }
+    const adminLink = document.querySelector("[data-admin-link]");
+    if (adminLink) adminLink.hidden = state.account?.isAdmin !== true;
   }
 
   function updateChatNav() {
@@ -892,13 +1179,17 @@
         const href = link.getAttribute("href");
         link.toggleAttribute("aria-current", href === path ||
           (href === "/players" && path.startsWith("/player/")) ||
-          (href === "/chalice" && path.startsWith("/chalice/")));
+          (href === "/chalice" && path.startsWith("/chalice/")) ||
+          (href === "/downloads" && path === "/downloads") ||
+          (href === "/admin/downloads" && path === "/admin/downloads"));
       });
       if (path === "/") await renderHome();
       else if (path === "/players") await renderPlayers();
       else if (path.startsWith("/player/")) await renderProfile(decodeURIComponent(path.slice(8)));
       else if (path === "/chalice") await renderChalices();
       else if (path.startsWith("/chalice/")) await renderChaliceDetail(decodeURIComponent(path.slice(9)));
+      else if (path === "/downloads") await renderDownloads();
+      else if (path === "/admin/downloads") await renderAdminDownloads();
       else if (path === "/register") await renderRegister();
       else if (path === "/login") await renderLogin();
       else if (path === "/account") await renderAccount();
@@ -919,7 +1210,7 @@
   document.addEventListener("click", (event) => {
     const anchor = event.target.closest("a[href]");
     if (!anchor || anchor.origin !== location.origin || anchor.target || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    const url = new URL(anchor.href); if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/assets/") || url.pathname.startsWith("/avatars/")) return;
+    const url = new URL(anchor.href); if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/assets/") || url.pathname.startsWith("/avatars/") || url.pathname.startsWith("/downloads/file/")) return;
     event.preventDefault(); history.pushState({}, "", url.pathname + url.search + url.hash); renderRoute();
   });
   addEventListener("popstate", renderRoute);

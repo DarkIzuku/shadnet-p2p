@@ -222,3 +222,17 @@ advanced to prevent future `ChannelUpload` collisions. The operation does not re
 touch accounts, profiles, messages, multiplayer data, `data/`, or configuration.
 
 ---
+
+## Migration 9: The Hunter's Requiem downloads catalog
+
+Migration 9 creates `bloodborne_web_download` for administrator-managed download metadata. It is
+non-destructive: existing tables and rows are left in place. Binary files are never stored in
+SQLite; they live in `data/downloads/` under random UUID names without extensions. The public API
+exposes the display metadata and numeric download ID, but never the internal filename or physical
+server path.
+
+Back up both the normal SQLite database (including its WAL files while the server is stopped) and
+the complete `data/downloads/` directory. Restoring only one of those two pieces can leave metadata
+without a file or an unreferenced file without metadata.
+
+---
