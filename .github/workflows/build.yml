@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 # SPDX-License-Identifier: GPL-2.0-or-later
+# Root Chalice feature branches compile and test only the Windows artifact.
 
 
 name: Build and Release
@@ -8,6 +9,7 @@ on:
   push:
     branches-ignore:
       - "codex/chalice-*"
+      - "codex/root-chalice-*"
     paths-ignore:
       - "**/*.md"
 
@@ -26,6 +28,7 @@ env:
 
 jobs:
   reuse:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/root-chalice-') }}
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
@@ -33,6 +36,7 @@ jobs:
     - uses: fsfe/reuse-action@v5
 
   clang-format:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/root-chalice-') }}
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
@@ -126,6 +130,23 @@ jobs:
       with:
         arch: x64
 
+    - name: Check formatting (Windows-only branch validation)
+      shell: pwsh
+      run: |
+        $files = @(
+          "src/bloodborne_summon_broker.cpp",
+          "src/bloodborne_summon_broker.h",
+          "src/config.cpp",
+          "src/config.h",
+          "src/webapi_routes_bloodborne.cpp",
+          "src/webapi_routes_bloodborne.h",
+          "src/webapi_server.cpp",
+          "tests/test_bloodborne_bootstrap.cpp",
+          "tests/test_bloodborne_summon_broker.cpp",
+          "tests/test_config.cpp"
+        )
+        clang-format --dry-run --Werror $files
+
     - name: Cache CMake configuration
       uses: actions/cache@v4
       env:
@@ -159,7 +180,7 @@ jobs:
 
     - name: Build and run tests
       run: |
-        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_config test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
         ctest --test-dir ${{ github.workspace }}/build -C ${{ env.BUILD_TYPE }} --output-on-failure
 
     - name: Stage release
@@ -169,6 +190,7 @@ jobs:
         Copy-Item ${{ github.workspace }}/build/shadnet.exe staging/
         Copy-Item ${{ github.workspace }}/build/worlds.cfg staging/
         Copy-Item ${{ github.workspace }}/build/scoreboards.cfg staging/
+        Copy-Item ${{ github.workspace }}/build/shadnet.example.cfg staging/
         Copy-Item -Recurse ${{ github.workspace }}/build/web staging/web
         # Copies Qt6 DLLs, sqldrivers/qsqlite.dll, and VC runtime alongside the exe
         windeployqt6 --release --no-translations staging/shadnet.exe
@@ -180,7 +202,7 @@ jobs:
         path: staging/
 
   linux:
-    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/chalice-') }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/chalice-') && !startsWith(github.head_ref || github.ref_name, 'codex/root-chalice-') }}
     runs-on: ubuntu-24.04
     needs: [get-info, get-qt-version]
     steps:

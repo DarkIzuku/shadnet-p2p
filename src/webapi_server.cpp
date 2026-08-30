@@ -207,9 +207,10 @@ void WebApiServer::RegisterRoutes() {
             welcomeNotice, welcomeMessage, m_config->GetBloodborneGhostLifetimeSeconds(),
             m_config->IsBloodborneWebsiteEnabled());
     }
-    WebApiRoutes::RegisterBloodborneRoutes(*m_http, m_config->IsBloodborneSeamlessCoopEnabled(),
-                                           m_config->IsBloodborneWebsiteEnabled() ? m_db.get()
-                                                                                  : nullptr);
+    WebApiRoutes::RegisterBloodborneRoutes(
+        *m_http, m_config->IsBloodborneSeamlessCoopEnabled(),
+        m_config->GetBloodborneSummonLocationMode(), m_config->IsBloodborneSummonTraceEnabled(),
+        m_config->IsBloodborneWebsiteEnabled() ? m_db.get() : nullptr);
 
     m_http->setMissingHandler(
         this, [this](const QHttpServerRequest& req, QHttpServerResponder& responder) {

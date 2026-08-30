@@ -149,42 +149,53 @@ It creates `build/shadnet.cfg` and `build/db/shadnet.db` because shadNet uses
 the executable's directory for its runtime files. Press `Ctrl+C` to stop it,
 then open `build/shadnet.cfg` in a text editor.
 
-Keep the generated file, but set these values under `[General]`:
+New installations generate grouped sections. You can also copy
+`shadnet.example.cfg` to `shadnet.cfg` and edit it. Existing flat `[General]`
+files remain fully supported; when both forms exist, the grouped key wins.
 
 ```ini
-[General]
+[Server]
 Host=0.0.0.0
 UnsecuredPort=31313
+
+[Network]
 Matching2Enabled=true
 MatchingUdpPort=31314
 WebApiPort=31315
-BloodborneSeamlessCoop=false
-BloodborneBootstrapEnabled=true
-BloodbornePublicBaseUrl=http://100.101.102.103:31315
-BloodborneReferenceProxyEnabled=false
-BloodborneReferenceProxyUrl=http://thehuntersdream.com:18671
-BloodborneWelcomeNoticeEnabled=true
-BloodborneWelcomeNoticeTitle=The Hunter's Dream
-BloodborneWelcomeNoticeBody=Welcome to the private Bloodborne server.
-BloodborneWelcomeMessageEnabled=false
-BloodborneWelcomeMessage=
-BloodborneGhostLifetimeSeconds=600
+
+[Bloodborne]
+SeamlessCoop=false
+BootstrapEnabled=true
+PublicBaseUrl=http://100.101.102.103:31315
+ReferenceProxyEnabled=false
+GhostLifetimeSeconds=600
+
+[BloodborneSummon]
+LocationMode=Vanilla
+
+[Website]
+Enabled=true
+Port=31316
+RegistrationEnabled=true
+ExternalAssetsEnabled=true
+ExternalAssetsPath=web
+ChatEnabled=true
+
+[Downloads]
+MaxFileSizeMiB=512
+
+[Accounts]
+RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
+
+[Stats]
+Enabled=false
+
+[Debug]
 ServerLogEnabled=true
 ServerLogDirectory=logs
 ServerLogKeepDays=30
 ServerLogFlushImmediately=true
-BloodborneWebsiteEnabled=true
-BloodborneWebsitePort=31316
-BloodborneWebsiteRegistrationEnabled=true
-BloodborneWebsiteExternalAssetsEnabled=true
-BloodborneWebsiteExternalAssetsPath=web
-BloodborneWebsiteChatEnabled=true
-BloodborneWebsiteChatMaxMessageLength=400
-BloodborneWebsiteChatHistoryLimit=100
-BloodborneWebsiteChatResetHours=24
-BloodborneWebsiteDownloadMaxFileSizeMiB=512
-StatsEnabled=false
-RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
+BloodborneSummonTrace=false
 ```
 
 shadNet does **not** generate the registration key. It is a private signup code
@@ -224,7 +235,8 @@ Traditional mode keeps Bloodborne's normal area, boss, level, bell, death, and
 session restrictions. Set this in `build/shadnet.cfg`:
 
 ```ini
-BloodborneSeamlessCoop=false
+[Bloodborne]
+SeamlessCoop=false
 ```
 
 Also make sure `SHADNET_BLOODBORNE_SEAMLESS_COOP` is not set in the terminal or
@@ -245,7 +257,8 @@ host's placement to the guest so the client can move the guest before the normal
 room join. The persistent and recommended server setting is:
 
 ```ini
-BloodborneSeamlessCoop=true
+[Bloodborne]
+SeamlessCoop=true
 ```
 
 Then restart shadNet normally:
@@ -265,6 +278,40 @@ Every player must also start QtLauncher or BBLauncher with
 `SHADPS4_BLOODBORNE_SEAMLESS_COOP=1`; the matching client README has commands
 for Linux, Windows, and macOS. The server trace variable is optional and is not
 needed for normal seamless play.
+
+### Easier traditional co-op discovery
+
+`LocationMode` changes only which summon advertisements are discoverable. It
+does not change spawn placement, teleport players, enable seamless co-op, or
+mix different Chalice channels. `ChannelId`, password, bell type and matching
+level remain enforced in every mode.
+
+The recommended traditional setting removes only the position/distance check:
+
+```ini
+[BloodborneSummon]
+LocationMode=SameRegion
+```
+
+`Vanilla` requires the same area, region and channel and keeps
+`DistanceThreshold`. `SameRegion` requires the same area, region and channel
+but ignores position/distance. Experimental `SameArea` requires the same area
+and channel but ignores region and distance:
+
+```ini
+[BloodborneSummon]
+LocationMode=SameArea
+```
+
+Old configurations default to `Vanilla`. Restart shadNet after changing the
+mode. The startup log prints the active location mode.
+
+For a temporary Root Chalice diagnostic, set
+`Debug/BloodborneSummonTrace=true` or start with
+`SHADNET_BLOODBORNE_SUMMON_TRACE=1`. The trace logs sanitized request/response
+metadata and every discovery filter; session identifiers, passwords and opaque
+game blobs are represented by lengths and SHA-256 hashes rather than their
+contents.
 
 Bell use and cross-map guest placement are working. Lantern travel after a
 co-op session is already established remains incomplete on the client side, so
