@@ -355,7 +355,8 @@ int main(int argc, char *argv[]) {
   WebApiRoutes::RegisterBloodborneBootstrapRoutes(
       http, db, shared, baseUrl, encodedLocal, false, welcomeNotice,
       enabledWelcomeMessage);
-  WebApiRoutes::RegisterBloodborneRoutes(http, false, &db);
+  WebApiRoutes::RegisterBloodborneRoutes(http, false, QStringLiteral("Vanilla"),
+                                         false, &db);
   QTcpServer tcp;
   CHECK(tcp.listen(QHostAddress::LocalHost, 0));
   CHECK(http.bind(&tcp));

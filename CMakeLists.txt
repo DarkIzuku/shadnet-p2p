@@ -131,6 +131,14 @@ target_link_libraries(shadnet PRIVATE
 )
 
 if(BUILD_TESTING)
+    add_executable(test_config EXCLUDE_FROM_ALL
+        tests/test_config.cpp
+        src/config.cpp
+    )
+    target_include_directories(test_config PRIVATE src)
+    target_link_libraries(test_config PRIVATE Qt6::Core)
+    add_test(NAME config COMMAND test_config)
+
     add_executable(test_bloodborne_summon_broker EXCLUDE_FROM_ALL
         tests/test_bloodborne_summon_broker.cpp
         src/bloodborne_summon_broker.cpp
@@ -247,6 +255,9 @@ add_custom_command(TARGET shadnet POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/scoreboards.cfg"
         "$<TARGET_FILE_DIR:shadnet>/scoreboards.cfg"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/shadnet.example.cfg"
+        "$<TARGET_FILE_DIR:shadnet>/shadnet.example.cfg"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:shadnet>/web"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -259,6 +270,6 @@ add_custom_command(TARGET shadnet POST_BUILD
 
 
 install(TARGETS shadnet RUNTIME DESTINATION bin)
-install(FILES worlds.cfg scoreboards.cfg DESTINATION bin)
+install(FILES worlds.cfg scoreboards.cfg shadnet.example.cfg DESTINATION bin)
 install(FILES web/index.html DESTINATION bin/web)
 install(DIRECTORY web/assets DESTINATION bin/web)

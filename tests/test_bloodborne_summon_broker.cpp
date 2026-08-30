@@ -222,6 +222,99 @@ int main() {
             .state == Bloodborne::SummonBroker::State::Advertised);
   CHECK(classicRemote.Search(Parse(search), 8'010).isEmpty());
 
+  // Root Chalice identity and unknown game-owned metadata must remain
+  // byte-for-byte intact.
+  const QByteArray rootAdvertisement =
+      R"({"MessageId":"SummonDataCreateRequest","SessionId":"root-session","UserId":7001,"CharaId":18446744073709551614,"AreaId":385875968,"AreaRegionId":230100,"ChannelId":987654321,"MatchingLevel":46,"SummonData":"opaque-root-data","SummonDataVersion":3,"SummonMethod":0,"SummonType":0,"SummonWord":null,"PosX":143,"PosY":-116,"PosZ":-87,"RootChannelMetadata":{"DiscernmentWord":"n2vskrmr","FormSeed":"0011223344556677","UnknownFlags":[1,{"value":2}]}})";
+  QByteArray rootSearch = search;
+  rootSearch.replace("\"ChannelId\":0", "\"ChannelId\":987654321");
+  Bloodborne::SummonBroker rootBroker(1'000);
+  CHECK(rootBroker.Advertise(Parse(rootAdvertisement), rootAdvertisement, 8'100)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  const QList<QByteArray> rootFound =
+      rootBroker.Search(Parse(rootSearch), 8'110);
+  CHECK(rootFound.size() == 1);
+  CHECK(rootFound.front() == rootAdvertisement);
+  CHECK(rootFound.front().contains("\"CharaId\":18446744073709551614"));
+  CHECK(rootFound.front().contains("\"RootChannelMetadata\""));
+  CHECK(rootBroker.Search(Parse(search), 8'111).isEmpty());
+
+  const QByteArray rootClaim =
+      R"({"MessageId":"SummonDataSummonRequest","SessionId":"root-session","UserId":7002,"TargetUserId":7001,"TargetCharaId":18446744073709551614,"RootClaimMetadata":{"Glyph":"n2vskrmr","Unknown":[3,4]},"ResKind":77})";
+  CHECK(rootBroker.Claim(Parse(rootClaim), rootClaim, 8'120).status ==
+        Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  const auto rootDelivery =
+      rootBroker.Advertise(Parse(rootAdvertisement), rootAdvertisement, 8'130);
+  CHECK(rootDelivery.state == Bloodborne::SummonBroker::State::Delivered);
+  const QByteArray rootDeliveryResponse =
+      Bloodborne::BuildClaimDeliveryResponse(rootDelivery.pendingClaim);
+  CHECK(rootDeliveryResponse.contains("\"RootClaimMetadata\""));
+  CHECK(
+      rootDeliveryResponse.contains("\"TargetCharaId\":18446744073709551614"));
+
+  // LocationMode changes discovery only. Channel, password, type and level
+  // remain enforced.
+  QByteArray farSearch = search;
+  farSearch.replace("\"PosX\":143", "\"PosX\":9999");
+  Bloodborne::SummonBroker vanilla(1'000);
+  CHECK(vanilla.Advertise(Parse(advertisement), advertisement, 8'200).state ==
+        Bloodborne::SummonBroker::State::Advertised);
+  CHECK(vanilla.Search(Parse(search), 8'201).size() == 1);
+  CHECK(vanilla.Search(Parse(farSearch), 8'202).isEmpty());
+
+  Bloodborne::SummonBroker::Options sameRegionOptions;
+  sameRegionOptions.ttlMs = 1'000;
+  sameRegionOptions.locationMode =
+      Bloodborne::SummonBroker::LocationMode::SameRegion;
+  Bloodborne::SummonBroker sameRegion(sameRegionOptions);
+  CHECK(
+      sameRegion.Advertise(Parse(advertisement), advertisement, 8'300).state ==
+      Bloodborne::SummonBroker::State::Advertised);
+  CHECK(sameRegion.Search(Parse(farSearch), 8'301).size() == 1);
+  QByteArray differentRegionSearch = farSearch;
+  differentRegionSearch.replace("\"AreaRegionId\":230100",
+                                "\"AreaRegionId\":230200");
+  CHECK(sameRegion.Search(Parse(differentRegionSearch), 8'302).isEmpty());
+  QByteArray differentChannelSearch = farSearch;
+  differentChannelSearch.replace("\"ChannelId\":0", "\"ChannelId\":99");
+  CHECK(sameRegion.Search(Parse(differentChannelSearch), 8'303).isEmpty());
+  QByteArray missingChannelSearch = farSearch;
+  missingChannelSearch.replace(",\"ChannelId\":0", "");
+  CHECK(sameRegion.Search(Parse(missingChannelSearch), 8'304).isEmpty());
+
+  Bloodborne::SummonBroker::Options sameAreaOptions;
+  sameAreaOptions.ttlMs = 1'000;
+  sameAreaOptions.locationMode =
+      Bloodborne::SummonBroker::LocationMode::SameArea;
+  Bloodborne::SummonBroker sameArea(sameAreaOptions);
+  CHECK(sameArea.Advertise(Parse(advertisement), advertisement, 8'400).state ==
+        Bloodborne::SummonBroker::State::Advertised);
+  CHECK(sameArea.Search(Parse(differentRegionSearch), 8'401).size() == 1);
+  QByteArray differentAreaSearch = differentRegionSearch;
+  differentAreaSearch.replace("\"AreaId\":385875968", "\"AreaId\":385941504");
+  CHECK(sameArea.Search(Parse(differentAreaSearch), 8'402).isEmpty());
+  CHECK(sameArea.Search(Parse(differentChannelSearch), 8'403).isEmpty());
+
+  QByteArray wrongTypeSearch = farSearch;
+  wrongTypeSearch.replace("\"SummonType\":0", "\"SummonType\":1");
+  CHECK(sameRegion.Search(Parse(wrongTypeSearch), 8'404).isEmpty());
+  QByteArray wrongLevelSearch = farSearch;
+  wrongLevelSearch.replace("\"MatchingLevel\":46", "\"MatchingLevel\":200");
+  CHECK(sameRegion.Search(Parse(wrongLevelSearch), 8'405).isEmpty());
+  QByteArray passwordSearch = farSearch;
+  passwordSearch.replace("\"SummonWord\":null", "\"SummonWord\":\"hunter\"");
+  CHECK(sameRegion.Search(Parse(passwordSearch), 8'406).isEmpty());
+
+  bool validMode = false;
+  CHECK(Bloodborne::ParseSummonLocationMode(QStringLiteral("sameRegion"),
+                                            &validMode) ==
+        Bloodborne::SummonBroker::LocationMode::SameRegion);
+  CHECK(validMode);
+  CHECK(Bloodborne::ParseSummonLocationMode(QStringLiteral("invalid"),
+                                            &validMode) ==
+        Bloodborne::SummonBroker::LocationMode::Vanilla);
+  CHECK(!validMode);
+
   Bloodborne::SummonBroker anywhere(seamlessOptions);
   CHECK(
       anywhere.Advertise(Parse(remoteAdvertisement), remoteAdvertisement, 9'000)
@@ -229,8 +322,8 @@ int main() {
   CHECK(anywhere.Search(Parse(search), 9'010, hostPlacement).isEmpty());
   CHECK(anywhere.StateFor(QStringLiteral("remote-session"), 3000, 9'010) ==
         Bloodborne::SummonBroker::State::Preparing);
-  const auto preparation = anywhere.Advertise(
-      Parse(remoteAdvertisement), remoteAdvertisement, 9'011);
+  const auto preparation = anywhere.Advertise(Parse(remoteAdvertisement),
+                                              remoteAdvertisement, 9'011);
   CHECK(preparation.state == Bloodborne::SummonBroker::State::Preparing);
   CHECK(preparation.pendingClaim.isEmpty());
   CHECK(preparation.pendingHostPlacement == hostPlacement);
@@ -245,7 +338,8 @@ int main() {
 
   QByteArray destinationAdvertisementRaw = remoteAdvertisement;
   destinationAdvertisementRaw.replace("\"AreaId\":111", "\"AreaId\":385941504");
-  const QJsonObject destinationAdvertisement = Parse(destinationAdvertisementRaw);
+  const QJsonObject destinationAdvertisement =
+      Parse(destinationAdvertisementRaw);
   const auto prepared = anywhere.Advertise(destinationAdvertisement,
                                            destinationAdvertisementRaw, 9'013);
   CHECK(prepared.state == Bloodborne::SummonBroker::State::Advertised);
@@ -276,7 +370,8 @@ int main() {
   CHECK(retained.pendingHostPlacement == hostPlacement);
   const auto destinationDelivery = anywhere.Advertise(
       destinationAdvertisement, destinationAdvertisementRaw, 9'040);
-  CHECK(destinationDelivery.state == Bloodborne::SummonBroker::State::Delivered);
+  CHECK(destinationDelivery.state ==
+        Bloodborne::SummonBroker::State::Delivered);
   CHECK(destinationDelivery.pendingClaim == remoteClaim);
   CHECK(destinationDelivery.pendingHostPlacement == hostPlacement);
   const QByteArray remoteDeliveryResponse =

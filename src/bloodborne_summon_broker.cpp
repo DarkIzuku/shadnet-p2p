@@ -7,6 +7,7 @@
 #include <limits>
 #include <vector>
 
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -45,6 +46,13 @@ bool SameIfPresent(const QJsonObject& request, const QJsonObject& sign, const QS
     return expected.isUndefined() || expected.isNull() || expected == sign.value(key);
 }
 
+bool SameRequired(const QJsonObject& request, const QJsonObject& sign, const QString& key) {
+    const QJsonValue expected = request.value(key);
+    const QJsonValue actual = sign.value(key);
+    return !expected.isUndefined() && !expected.isNull() && !actual.isUndefined() &&
+           !actual.isNull() && expected == actual;
+}
+
 bool IsSeamlessActiveState(SummonBroker::State state) {
     return state == SummonBroker::State::Preparing || state == SummonBroker::State::Claimed ||
            state == SummonBroker::State::Delivered;
@@ -73,21 +81,43 @@ std::optional<qint64> HostPlacementMap(const QByteArray& placement) {
     return static_cast<qint64>(packedMap);
 }
 
-bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool anywhereSummons) {
+struct SearchMatchChecks {
+    bool differentUser = true;
+    bool differentSession = true;
+    bool version = true;
+    bool method = true;
+    bool area = true;
+    bool region = true;
+    bool channel = true;
+    bool summonType = true;
+    bool password = true;
+    bool level = true;
+    bool distance = true;
+
+    bool Matches() const {
+        return differentUser && differentSession && version && method && area && region &&
+               channel && summonType && password && level && distance;
+    }
+};
+
+SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObject& sign,
+                                      bool anywhereSummons,
+                                      SummonBroker::LocationMode locationMode) {
+    SearchMatchChecks checks;
     const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
     const QString requesterSession = request.value(QStringLiteral("SessionId")).toString();
-    if (Integer(sign, QStringLiteral("UserId"), -1) == requester ||
-        sign.value(QStringLiteral("SessionId")).toString() == requesterSession) {
-        return false;
-    }
-    if (!SameIfPresent(request, sign, QStringLiteral("SummonDataVersion")) ||
-        !SameIfPresent(request, sign, QStringLiteral("SummonMethod"))) {
-        return false;
-    }
-    if (!anywhereSummons && (!SameIfPresent(request, sign, QStringLiteral("AreaId")) ||
-                             !SameIfPresent(request, sign, QStringLiteral("AreaRegionId")) ||
-                             !SameIfPresent(request, sign, QStringLiteral("ChannelId")))) {
-        return false;
+    checks.differentUser = Integer(sign, QStringLiteral("UserId"), -1) != requester;
+    checks.differentSession =
+        sign.value(QStringLiteral("SessionId")).toString() != requesterSession;
+    checks.version = SameIfPresent(request, sign, QStringLiteral("SummonDataVersion"));
+    checks.method = SameIfPresent(request, sign, QStringLiteral("SummonMethod"));
+    if (!anywhereSummons) {
+        checks.area = SameRequired(request, sign, QStringLiteral("AreaId"));
+        checks.region = locationMode == SummonBroker::LocationMode::SameArea ||
+                        SameRequired(request, sign, QStringLiteral("AreaRegionId"));
+        // Channel identity is deliberately mandatory in every classic location mode. Root
+        // Chalices with different channels must never share summon advertisements.
+        checks.channel = SameRequired(request, sign, QStringLiteral("ChannelId"));
     }
 
     QSet<int> summonTypes;
@@ -99,13 +129,13 @@ bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool any
     }
     if (!summonTypes.isEmpty() &&
         !summonTypes.contains(static_cast<int>(Integer(sign, QStringLiteral("SummonType"))))) {
-        return false;
+        checks.summonType = false;
     }
 
     const QString requestWord = request.value(QStringLiteral("SummonWord")).toString();
     const QString signWord = sign.value(QStringLiteral("SummonWord")).toString();
     if (!requestWord.isEmpty() && requestWord != signWord) {
-        return false;
+        checks.password = false;
     }
 
     const qint64 requestLevel = Integer(request, QStringLiteral("MatchingLevel"), -1);
@@ -113,13 +143,14 @@ bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool any
     if (!anywhereSummons && requestWord.isEmpty() && requestLevel >= 0 && signLevel >= 0) {
         const qint64 levelRange = 10 + requestLevel / 5;
         if (std::abs(requestLevel - signLevel) > levelRange) {
-            return false;
+            checks.level = false;
         }
     }
 
     const qint64 distance = Integer(request, QStringLiteral("DistanceThreshold"), -1);
-    if (!anywhereSummons && distance >= 0 && request.contains(QStringLiteral("PosX")) &&
-        request.contains(QStringLiteral("PosY")) && request.contains(QStringLiteral("PosZ"))) {
+    if (!anywhereSummons && locationMode == SummonBroker::LocationMode::Vanilla && distance >= 0 &&
+        request.contains(QStringLiteral("PosX")) && request.contains(QStringLiteral("PosY")) &&
+        request.contains(QStringLiteral("PosZ"))) {
         const qint64 deltaX =
             Integer(request, QStringLiteral("PosX")) - Integer(sign, QStringLiteral("PosX"));
         const qint64 deltaY =
@@ -127,10 +158,46 @@ bool MatchesSearch(const QJsonObject& request, const QJsonObject& sign, bool any
         const qint64 deltaZ =
             Integer(request, QStringLiteral("PosZ")) - Integer(sign, QStringLiteral("PosZ"));
         if (deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ > distance * distance) {
-            return false;
+            checks.distance = false;
         }
     }
-    return true;
+    return checks;
+}
+
+QJsonObject SearchTrace(const QJsonObject& request, const QJsonObject& sign,
+                        const SearchMatchChecks& checks, SummonBroker::State state,
+                        SummonBroker::LocationMode locationMode, bool anywhereSummons) {
+    QJsonObject trace;
+    trace.insert(QStringLiteral("request_user_id"), Integer(request, QStringLiteral("UserId"), -1));
+    trace.insert(QStringLiteral("candidate_user_id"), Integer(sign, QStringLiteral("UserId"), -1));
+    trace.insert(QStringLiteral("state"), static_cast<int>(state));
+    trace.insert(QStringLiteral("location_mode"), SummonLocationModeName(locationMode));
+    trace.insert(QStringLiteral("seamless_anywhere"), anywhereSummons);
+    trace.insert(QStringLiteral("request_area"), Integer(request, QStringLiteral("AreaId"), -1));
+    trace.insert(QStringLiteral("candidate_area"), Integer(sign, QStringLiteral("AreaId"), -1));
+    trace.insert(QStringLiteral("request_region"),
+                 Integer(request, QStringLiteral("AreaRegionId"), -1));
+    trace.insert(QStringLiteral("candidate_region"),
+                 Integer(sign, QStringLiteral("AreaRegionId"), -1));
+    trace.insert(QStringLiteral("request_channel"),
+                 Integer(request, QStringLiteral("ChannelId"), -1));
+    trace.insert(QStringLiteral("candidate_channel"),
+                 Integer(sign, QStringLiteral("ChannelId"), -1));
+    QJsonObject filters;
+    filters.insert(QStringLiteral("different_user"), checks.differentUser);
+    filters.insert(QStringLiteral("different_session"), checks.differentSession);
+    filters.insert(QStringLiteral("version"), checks.version);
+    filters.insert(QStringLiteral("method"), checks.method);
+    filters.insert(QStringLiteral("area"), checks.area);
+    filters.insert(QStringLiteral("region"), checks.region);
+    filters.insert(QStringLiteral("channel"), checks.channel);
+    filters.insert(QStringLiteral("summon_type"), checks.summonType);
+    filters.insert(QStringLiteral("password"), checks.password);
+    filters.insert(QStringLiteral("level"), checks.level);
+    filters.insert(QStringLiteral("distance"), checks.distance);
+    trace.insert(QStringLiteral("filters"), filters);
+    trace.insert(QStringLiteral("accepted"), checks.Matches());
+    return trace;
 }
 
 struct TopLevelMember {
@@ -353,13 +420,14 @@ SummonBroker::SummonBroker() : SummonBroker(Options{}) {}
 
 SummonBroker::SummonBroker(qint64 ttlMs)
     : m_ttlMs(std::max<qint64>(1, ttlMs)), m_seamlessTtlMs(15 * 60 * 1000), m_seamlessCoop(false),
-      m_seamlessAnywhereSummons(false) {}
+      m_seamlessAnywhereSummons(false), m_locationMode(LocationMode::Vanilla), m_trace(false) {}
 
 SummonBroker::SummonBroker(Options options)
     : m_ttlMs(std::max<qint64>(1, options.ttlMs)),
       m_seamlessTtlMs(std::max<qint64>(m_ttlMs, options.seamlessTtlMs)),
       m_seamlessCoop(options.seamlessCoop),
-      m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop) {}
+      m_seamlessAnywhereSummons(options.seamlessAnywhereSummons || options.seamlessCoop),
+      m_locationMode(options.locationMode), m_trace(options.trace) {}
 
 SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
                                                       const QByteArray& rawBody, qint64 nowMs) {
@@ -417,8 +485,16 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
     const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
-        if (it->state == State::Advertised &&
-            MatchesSearch(request, it->advertisement, anywhereSummons)) {
+        const SearchMatchChecks checks =
+            EvaluateSearchMatch(request, it->advertisement, anywhereSummons, m_locationMode);
+        if (m_trace) {
+            qInfo().noquote() << "[BLOODBORNE SUMMON TRACE] candidate"
+                              << QJsonDocument(SearchTrace(request, it->advertisement, checks,
+                                                           it->state, m_locationMode,
+                                                           anywhereSummons))
+                                     .toJson(QJsonDocument::Compact);
+        }
+        if (it->state == State::Advertised && checks.Matches()) {
             if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
                 Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
                 it->state = State::Preparing;
@@ -432,7 +508,7 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
                                                        request, anywhereSummons)});
         } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
                    Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
-                   MatchesSearch(request, it->advertisement, anywhereSummons)) {
+                   checks.Matches()) {
             candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
                                                        it->rawAdvertisement, it->advertisement,
                                                        request, anywhereSummons)});
@@ -578,6 +654,10 @@ bool SummonBroker::IsSeamlessAnywhereSummonsEnabled() const {
     return m_seamlessAnywhereSummons;
 }
 
+SummonBroker::LocationMode SummonBroker::GetLocationMode() const {
+    return m_locationMode;
+}
+
 void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
     for (auto it = m_records.begin(); it != m_records.end();) {
         const qint64 ttl =
@@ -588,6 +668,44 @@ void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
             ++it;
         }
     }
+}
+
+SummonBroker::LocationMode ParseSummonLocationMode(const QString& value, bool* valid) {
+    const QString normalized = value.trimmed();
+    if (normalized.compare(QStringLiteral("Vanilla"), Qt::CaseInsensitive) == 0) {
+        if (valid != nullptr) {
+            *valid = true;
+        }
+        return SummonBroker::LocationMode::Vanilla;
+    }
+    if (normalized.compare(QStringLiteral("SameRegion"), Qt::CaseInsensitive) == 0) {
+        if (valid != nullptr) {
+            *valid = true;
+        }
+        return SummonBroker::LocationMode::SameRegion;
+    }
+    if (normalized.compare(QStringLiteral("SameArea"), Qt::CaseInsensitive) == 0) {
+        if (valid != nullptr) {
+            *valid = true;
+        }
+        return SummonBroker::LocationMode::SameArea;
+    }
+    if (valid != nullptr) {
+        *valid = false;
+    }
+    return SummonBroker::LocationMode::Vanilla;
+}
+
+QString SummonLocationModeName(SummonBroker::LocationMode mode) {
+    switch (mode) {
+    case SummonBroker::LocationMode::Vanilla:
+        return QStringLiteral("Vanilla");
+    case SummonBroker::LocationMode::SameRegion:
+        return QStringLiteral("SameRegion");
+    case SummonBroker::LocationMode::SameArea:
+        return QStringLiteral("SameArea");
+    }
+    return QStringLiteral("Vanilla");
 }
 
 bool HasRequiredAdvertisementFields(const QJsonObject& body) {

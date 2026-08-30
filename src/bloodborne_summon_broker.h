@@ -17,12 +17,15 @@ class SummonBroker {
 public:
     enum class State { Advertised, Preparing, Claimed, Delivered, Consumed };
     enum class ClaimStatus { Claimed, AlreadyClaimed, NotFound, Conflict };
+    enum class LocationMode { Vanilla, SameRegion, SameArea };
 
     struct Options {
         qint64 ttlMs = 130'000;
         qint64 seamlessTtlMs = 15 * 60 * 1000;
         bool seamlessCoop = false;
         bool seamlessAnywhereSummons = false;
+        LocationMode locationMode = LocationMode::Vanilla;
+        bool trace = false;
     };
 
     struct AdvertiseResult {
@@ -58,6 +61,7 @@ public:
     int Size(qint64 nowMs);
     bool IsSeamlessCoopEnabled() const;
     bool IsSeamlessAnywhereSummonsEnabled() const;
+    LocationMode GetLocationMode() const;
 
 private:
     struct Record {
@@ -77,10 +81,14 @@ private:
     qint64 m_seamlessTtlMs;
     bool m_seamlessCoop;
     bool m_seamlessAnywhereSummons;
+    LocationMode m_locationMode;
+    bool m_trace;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
 };
 
+SummonBroker::LocationMode ParseSummonLocationMode(const QString& value, bool* valid = nullptr);
+QString SummonLocationModeName(SummonBroker::LocationMode mode);
 bool HasRequiredAdvertisementFields(const QJsonObject& body);
 QByteArray BuildClaimDeliveryResponse(const QByteArray& rawClaim);
 
