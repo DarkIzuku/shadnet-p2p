@@ -3,9 +3,11 @@
 #include <cstdlib>
 #include <iostream>
 
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QStringList>
 
 #include "bloodborne_summon_broker.h"
 
@@ -29,6 +31,34 @@ bool Check(bool condition, const char *expression, int line) {
   return condition;
 }
 
+QStringList capturedMessages;
+
+void CaptureMessage(QtMsgType, const QMessageLogContext &,
+                    const QString &message) {
+  capturedMessages.append(message);
+}
+
+QByteArray Compact(const QJsonObject &object) {
+  return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+struct TraceRun {
+  int found = 0;
+  QString messages;
+};
+
+TraceRun RunTraceSearch(const QJsonObject &advertisement,
+                        const QJsonObject &search, bool advertise = true) {
+  Bloodborne::SummonBroker broker(1'000);
+  if (advertise) {
+    const QByteArray rawAdvertisement = Compact(advertisement);
+    broker.Advertise(advertisement, rawAdvertisement, 100);
+  }
+  capturedMessages.clear();
+  const int found = broker.Search(search, 110).size();
+  return {found, capturedMessages.join(QLatin1Char('\n'))};
+}
+
 #define CHECK(expression)                                                      \
   do {                                                                         \
     if (!Check((expression), #expression, __LINE__))                           \
@@ -38,6 +68,7 @@ bool Check(bool condition, const char *expression, int line) {
 } // namespace
 
 int main() {
+  qunsetenv("SHADNET_BLOODBORNE_SUMMON_TRACE");
   const QByteArray advertisement =
       R"({"MessageId":"SummonDataCreateRequest","SessionId":"guest-session","UserId":2465,"CharaId":9223372036854775808,"AreaId":385875968,"AreaRegionId":230100,"ChannelId":0,"MatchingLevel":46,"SummonData":"opaque-game-data","SummonDataVersion":3,"SummonMethod":0,"SummonType":0,"SummonWord":null,"PosX":143,"PosY":-116,"PosZ":-87})";
   const QByteArray remoteAdvertisement =
@@ -229,8 +260,8 @@ int main() {
   CHECK(anywhere.Search(Parse(search), 9'010, hostPlacement).isEmpty());
   CHECK(anywhere.StateFor(QStringLiteral("remote-session"), 3000, 9'010) ==
         Bloodborne::SummonBroker::State::Preparing);
-  const auto preparation = anywhere.Advertise(
-      Parse(remoteAdvertisement), remoteAdvertisement, 9'011);
+  const auto preparation = anywhere.Advertise(Parse(remoteAdvertisement),
+                                              remoteAdvertisement, 9'011);
   CHECK(preparation.state == Bloodborne::SummonBroker::State::Preparing);
   CHECK(preparation.pendingClaim.isEmpty());
   CHECK(preparation.pendingHostPlacement == hostPlacement);
@@ -245,7 +276,8 @@ int main() {
 
   QByteArray destinationAdvertisementRaw = remoteAdvertisement;
   destinationAdvertisementRaw.replace("\"AreaId\":111", "\"AreaId\":385941504");
-  const QJsonObject destinationAdvertisement = Parse(destinationAdvertisementRaw);
+  const QJsonObject destinationAdvertisement =
+      Parse(destinationAdvertisementRaw);
   const auto prepared = anywhere.Advertise(destinationAdvertisement,
                                            destinationAdvertisementRaw, 9'013);
   CHECK(prepared.state == Bloodborne::SummonBroker::State::Advertised);
@@ -276,7 +308,8 @@ int main() {
   CHECK(retained.pendingHostPlacement == hostPlacement);
   const auto destinationDelivery = anywhere.Advertise(
       destinationAdvertisement, destinationAdvertisementRaw, 9'040);
-  CHECK(destinationDelivery.state == Bloodborne::SummonBroker::State::Delivered);
+  CHECK(destinationDelivery.state ==
+        Bloodborne::SummonBroker::State::Delivered);
   CHECK(destinationDelivery.pendingClaim == remoteClaim);
   CHECK(destinationDelivery.pendingHostPlacement == hostPlacement);
   const QByteArray remoteDeliveryResponse =
@@ -284,6 +317,154 @@ int main() {
   CHECK(remoteDeliveryResponse.contains(
       "\"HostData\":\"remote-host-owned-data\""));
   CHECK(!remoteDeliveryResponse.contains("\"SeamlessWarp\""));
+
+  const QJsonObject traceAdvertisement = Parse(advertisement);
+  const QJsonObject traceSearch = Parse(search);
+  const QtMessageHandler previousMessageHandler =
+      qInstallMessageHandler(CaptureMessage);
+
+  capturedMessages.clear();
+  Bloodborne::SummonBroker traceOffBroker(1'000);
+  CHECK(
+      traceOffBroker.Advertise(traceAdvertisement, advertisement, 100).state ==
+      Bloodborne::SummonBroker::State::Advertised);
+  const QList<QByteArray> traceOffResults =
+      traceOffBroker.Search(traceSearch, 110);
+  CHECK(traceOffResults.size() == 1);
+  CHECK(!capturedMessages.join(QLatin1Char('\n'))
+             .contains("[BLOODBORNE_SUMMON_TRACE]"));
+
+  qputenv("SHADNET_BLOODBORNE_SUMMON_TRACE", "1");
+  const TraceRun acceptedTrace =
+      RunTraceSearch(traceAdvertisement, traceSearch);
+  CHECK(acceptedTrace.found == 1);
+  CHECK(acceptedTrace.messages.contains("[BLOODBORNE_SUMMON_TRACE]"));
+  CHECK(acceptedTrace.messages.contains("\"result\":\"ACCEPTED\""));
+  CHECK(acceptedTrace.messages.contains(
+      "\"result\":\"ADVERTISEMENT_FOUND_AND_RETURNED\""));
+  CHECK(acceptedTrace.messages.contains("\"requester_user\":2466"));
+  CHECK(acceptedTrace.messages.contains("\"candidate_user\":2465"));
+  CHECK(acceptedTrace.messages.contains("\"SessionId\":\"host-session\""));
+  CHECK(acceptedTrace.messages.contains("\"SessionId\":\"guest-session\""));
+  CHECK(acceptedTrace.messages.contains("\"SummonWordPresent\":false"));
+
+  const QStringList allChecks = {
+      QStringLiteral("CANDIDATE_STATE"),
+      QStringLiteral("DIFFERENT_USER"),
+      QStringLiteral("DIFFERENT_SESSION"),
+      QStringLiteral("SUMMON_DATA_VERSION"),
+      QStringLiteral("SUMMON_METHOD"),
+      QStringLiteral("AREA_ID"),
+      QStringLiteral("AREA_REGION_ID"),
+      QStringLiteral("CHANNEL_ID"),
+      QStringLiteral("SUMMON_TYPE"),
+      QStringLiteral("SUMMON_WORD"),
+      QStringLiteral("MATCHING_LEVEL"),
+      QStringLiteral("DISTANCE"),
+  };
+  for (const QString &check : allChecks) {
+    CHECK(acceptedTrace.messages.contains(
+        QStringLiteral("\"%1\":\"PASS\"").arg(check)));
+  }
+
+  struct RejectionScenario {
+    QString primaryReason;
+    QJsonObject advertisement;
+    QJsonObject request;
+  };
+  QList<RejectionScenario> rejectionScenarios;
+  auto addAdvertisementRejection = [&](const QString &reason,
+                                       const QString &field,
+                                       const QJsonValue &value) {
+    QJsonObject changed = traceAdvertisement;
+    changed.insert(field, value);
+    rejectionScenarios.append({reason, changed, traceSearch});
+  };
+  addAdvertisementRejection(QStringLiteral("DIFFERENT_USER"),
+                            QStringLiteral("UserId"), 2466);
+  addAdvertisementRejection(QStringLiteral("DIFFERENT_SESSION"),
+                            QStringLiteral("SessionId"),
+                            QStringLiteral("host-session"));
+  addAdvertisementRejection(QStringLiteral("SUMMON_DATA_VERSION"),
+                            QStringLiteral("SummonDataVersion"), 2);
+  addAdvertisementRejection(QStringLiteral("SUMMON_METHOD"),
+                            QStringLiteral("SummonMethod"), 1);
+  addAdvertisementRejection(QStringLiteral("AREA_ID"), QStringLiteral("AreaId"),
+                            385875969);
+  addAdvertisementRejection(QStringLiteral("AREA_REGION_ID"),
+                            QStringLiteral("AreaRegionId"), 230101);
+  addAdvertisementRejection(QStringLiteral("CHANNEL_ID"),
+                            QStringLiteral("ChannelId"), 9);
+  addAdvertisementRejection(QStringLiteral("SUMMON_TYPE"),
+                            QStringLiteral("SummonType"), 1);
+  addAdvertisementRejection(QStringLiteral("MATCHING_LEVEL"),
+                            QStringLiteral("MatchingLevel"), 200);
+  addAdvertisementRejection(QStringLiteral("DISTANCE"), QStringLiteral("PosX"),
+                            999);
+
+  QJsonObject passwordAdvertisement = traceAdvertisement;
+  passwordAdvertisement.insert(QStringLiteral("SummonWord"),
+                               QStringLiteral("wrong-password"));
+  QJsonObject passwordSearch = traceSearch;
+  passwordSearch.insert(QStringLiteral("SummonWord"),
+                        QStringLiteral("expected-password"));
+  rejectionScenarios.append(
+      {QStringLiteral("SUMMON_WORD"), passwordAdvertisement, passwordSearch});
+
+  QString channelTrace;
+  for (const RejectionScenario &scenario : rejectionScenarios) {
+    const TraceRun rejected =
+        RunTraceSearch(scenario.advertisement, scenario.request);
+    CHECK(rejected.found == 0);
+    CHECK(rejected.messages.contains(QStringLiteral("\"primary_reason\":\"%1\"")
+                                         .arg(scenario.primaryReason)));
+    CHECK(rejected.messages.contains(
+        QStringLiteral("\"%1\":\"FAIL\"").arg(scenario.primaryReason)));
+    CHECK(rejected.messages.contains(
+        "\"result\":\"ADVERTISEMENT_FOUND_BUT_FILTERED\""));
+    if (scenario.primaryReason == QStringLiteral("CHANNEL_ID")) {
+      channelTrace = rejected.messages;
+    }
+  }
+
+  Bloodborne::SummonBroker stateFilteredBroker(1'000);
+  stateFilteredBroker.Advertise(traceAdvertisement, advertisement, 100);
+  stateFilteredBroker.Claim(Parse(claim), claim, 105);
+  capturedMessages.clear();
+  CHECK(stateFilteredBroker.Search(traceSearch, 110).isEmpty());
+  const QString stateFilteredTrace = capturedMessages.join(QLatin1Char('\n'));
+  CHECK(stateFilteredTrace.contains("\"CANDIDATE_STATE\":\"FAIL\""));
+  CHECK(stateFilteredTrace.contains("\"primary_reason\":\"CANDIDATE_STATE\""));
+
+  CHECK(channelTrace.contains("\"channel_id\":9"));
+  CHECK(channelTrace.contains(
+      "\"metadata_source\":\"UNAVAILABLE_IN_SUMMON_BROKER\""));
+  CHECK(channelTrace.contains("\"exists_in_db\":null"));
+  CHECK(channelTrace.contains("\"glyph\":null"));
+  CHECK(channelTrace.contains("\"share_level\":null"));
+  CHECK(channelTrace.contains("\"status\":null"));
+  CHECK(channelTrace.contains("\"owner_user_id\":null"));
+  CHECK(channelTrace.contains("\"vanilla_fixed\":null"));
+  CHECK(channelTrace.contains("\"community\":null"));
+
+  QJsonObject multipleFailures = traceAdvertisement;
+  multipleFailures.insert(QStringLiteral("SummonDataVersion"), 2);
+  multipleFailures.insert(QStringLiteral("AreaId"), 385875969);
+  const TraceRun allFailureChecks =
+      RunTraceSearch(multipleFailures, traceSearch);
+  CHECK(allFailureChecks.messages.contains("\"SUMMON_DATA_VERSION\":\"FAIL\""));
+  CHECK(allFailureChecks.messages.contains("\"AREA_ID\":\"FAIL\""));
+  CHECK(allFailureChecks.messages.contains("\"CHANNEL_ID\":\"PASS\""));
+  CHECK(allFailureChecks.messages.contains("\"DISTANCE\":\"PASS\""));
+
+  const TraceRun noAdvertisement =
+      RunTraceSearch(QJsonObject{}, traceSearch, false);
+  CHECK(noAdvertisement.found == 0);
+  CHECK(noAdvertisement.messages.contains("\"result\":\"NO_ADVERTISEMENT\""));
+  CHECK(!noAdvertisement.messages.contains("\"event\":\"CANDIDATE\""));
+
+  qunsetenv("SHADNET_BLOODBORNE_SUMMON_TRACE");
+  qInstallMessageHandler(previousMessageHandler);
 
   std::cout << "Bloodborne summon broker state test passed\n";
   return 0;
