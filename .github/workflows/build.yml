@@ -152,8 +152,14 @@ jobs:
         -DCMAKE_C_COMPILER_LAUNCHER=ccache
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
-    - name: Build
+    - name: Build full Release
       run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --parallel $env:NUMBER_OF_PROCESSORS
+
+    - name: Build tests
+      run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker --parallel $env:NUMBER_OF_PROCESSORS
+
+    - name: Run CTest
+      run: ctest --test-dir ${{ github.workspace }}/build -C ${{ env.BUILD_TYPE }} --output-on-failure
 
     - name: Stage release
       shell: pwsh
@@ -170,6 +176,7 @@ jobs:
         path: staging/
 
   linux:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     needs: [get-info, get-qt-version]
     steps:
