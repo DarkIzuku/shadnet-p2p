@@ -1,1 +1,95 @@
-// SPDX-FileCopyrightText: Copyright 2026 shadNet Project\r\n// SPDX-License-Identifier: GPL-2.0-or-later\r\n\r\n#include <iostream>\r\n\r\n#include <QSettings>\r\n#include <QTemporaryDir>\r\n\r\n#include "config.h"\r\n\r\nnamespace {\r\n\r\nbool Check(bool condition, const char *expression, int line) {\r\n  if (!condition) {\r\n    std::cerr << "check failed at line " << line << ": " << expression << '\n';\r\n  }\r\n  return condition;\r\n}\r\n\r\n#define CHECK(expression)                                                      \\r\n  do {                                                                         \\r\n    if (!Check((expression), #expression, __LINE__))                           \\r\n      return 1;                                                                \\r\n  } while (false)\r\n\r\n} // namespace\r\n\r\nint main() {\r\n  QTemporaryDir temporary;\r\n  CHECK(temporary.isValid());\r\n\r\n  const QString legacyPath = temporary.filePath(QStringLiteral("legacy.cfg"));\r\n  {\r\n    QSettings settings(legacyPath, QSettings::IniFormat);\r\n    settings.setValue(QStringLiteral("Host"), QStringLiteral("0.0.0.0"));\r\n    settings.setValue(QStringLiteral("Matching2Enabled"), false);\r\n    settings.setValue(QStringLiteral("BloodborneSeamlessCoop"), true);\r\n    settings.setValue(QStringLiteral("BloodborneSummonLocationMode"),\r\n                      QStringLiteral("SameRegion"));\r\n    settings.setValue(QStringLiteral("BloodborneWebsitePort"),\r\n                      QStringLiteral("32000"));\r\n    settings.setValue(QStringLiteral("RegistrationSecretKey"),\r\n                      QStringLiteral("legacy-key"));\r\n    settings.sync();\r\n  }\r\n  ConfigManager legacy;\r\n  CHECK(legacy.Load(legacyPath));\r\n  CHECK(legacy.GetHost() == QStringLiteral("0.0.0.0"));\r\n  CHECK(!legacy.IsMatching2Enabled());\r\n  CHECK(legacy.IsBloodborneSeamlessCoopEnabled());\r\n  CHECK(legacy.GetBloodborneSummonLocationMode() ==\r\n        QStringLiteral("SameRegion"));\r\n  CHECK(legacy.GetBloodborneWebsitePort() == QStringLiteral("32000"));\r\n  CHECK(legacy.IsRegistrationAllowed(QStringLiteral("legacy-key")));\r\n  CHECK(!legacy.IsRegistrationAllowed(QStringLiteral("wrong")));\r\n\r\n  const QString groupedPath = temporary.filePath(QStringLiteral("grouped.cfg"));\r\n  {\r\n    QSettings settings(groupedPath, QSettings::IniFormat);\r\n    settings.setValue(QStringLiteral("Server/Host"),\r\n                      QStringLiteral("127.1.2.3"));\r\n    settings.setValue(QStringLiteral("Host"), QStringLiteral("legacy-loses"));\r\n    settings.setValue(QStringLiteral("Network/Matching2Enabled"), true);\r\n    settings.setValue(QStringLiteral("BloodborneSummon/LocationMode"),\r\n                      QStringLiteral("SameArea"));\r\n    settings.setValue(QStringLiteral("Debug/BloodborneSummonTrace"), true);\r\n    settings.setValue(QStringLiteral("Accounts/AdminsList"),\r\n                      QStringLiteral("Izuku,Test"));\r\n    settings.sync();\r\n  }\r\n  ConfigManager grouped;\r\n  CHECK(grouped.Load(groupedPath));\r\n  CHECK(grouped.GetHost() == QStringLiteral("127.1.2.3"));\r\n  CHECK(grouped.IsMatching2Enabled());\r\n  CHECK(grouped.GetBloodborneSummonLocationMode() ==\r\n        QStringLiteral("SameArea"));\r\n  CHECK(grouped.IsBloodborneSummonTraceEnabled());\r\n  CHECK(grouped.IsAdmin(QStringLiteral("Izuku")));\r\n\r\n  const QString generatedPath =\r\n      temporary.filePath(QStringLiteral("generated.cfg"));\r\n  ConfigManager generated;\r\n  CHECK(generated.Load(generatedPath));\r\n  QSettings generatedSettings(generatedPath, QSettings::IniFormat);\r\n  CHECK(generatedSettings.contains(QStringLiteral("Server/Host")));\r\n  CHECK(generatedSettings.contains(QStringLiteral("Network/Matching2Enabled")));\r\n  CHECK(generatedSettings.contains(\r\n      QStringLiteral("BloodborneSummon/LocationMode")));\r\n  CHECK(generatedSettings.value(QStringLiteral("BloodborneSummon/LocationMode"))\r\n            .toString() == QStringLiteral("Vanilla"));\r\n  CHECK(!generatedSettings.contains(QStringLiteral("BloodborneSeamlessCoop")));\r\n\r\n  std::cout << "Config compatibility test passed\n";\r\n  return 0;\r\n}\r\n
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <iostream>
+
+#include <QSettings>
+#include <QTemporaryDir>
+
+#include "config.h"
+
+namespace {
+
+bool Check(bool condition, const char *expression, int line) {
+  if (!condition) {
+    std::cerr << "check failed at line " << line << ": " << expression << '\n';
+  }
+  return condition;
+}
+
+#define CHECK(expression)                                                      \
+  do {                                                                         \
+    if (!Check((expression), #expression, __LINE__))                           \
+      return 1;                                                                \
+  } while (false)
+
+} // namespace
+
+int main() {
+  QTemporaryDir temporary;
+  CHECK(temporary.isValid());
+
+  const QString legacyPath = temporary.filePath(QStringLiteral("legacy.cfg"));
+  {
+    QSettings settings(legacyPath, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("Host"), QStringLiteral("0.0.0.0"));
+    settings.setValue(QStringLiteral("Matching2Enabled"), false);
+    settings.setValue(QStringLiteral("BloodborneSeamlessCoop"), true);
+    settings.setValue(QStringLiteral("BloodborneSummonLocationMode"),
+                      QStringLiteral("SameRegion"));
+    settings.setValue(QStringLiteral("BloodborneWebsitePort"),
+                      QStringLiteral("32000"));
+    settings.setValue(QStringLiteral("RegistrationSecretKey"),
+                      QStringLiteral("legacy-key"));
+    settings.sync();
+  }
+  ConfigManager legacy;
+  CHECK(legacy.Load(legacyPath));
+  CHECK(legacy.GetHost() == QStringLiteral("0.0.0.0"));
+  CHECK(!legacy.IsMatching2Enabled());
+  CHECK(legacy.IsBloodborneSeamlessCoopEnabled());
+  CHECK(legacy.GetBloodborneSummonLocationMode() ==
+        QStringLiteral("SameRegion"));
+  CHECK(legacy.GetBloodborneWebsitePort() == QStringLiteral("32000"));
+  CHECK(legacy.IsRegistrationAllowed(QStringLiteral("legacy-key")));
+  CHECK(!legacy.IsRegistrationAllowed(QStringLiteral("wrong")));
+
+  const QString groupedPath = temporary.filePath(QStringLiteral("grouped.cfg"));
+  {
+    QSettings settings(groupedPath, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("Server/Host"),
+                      QStringLiteral("127.1.2.3"));
+    settings.setValue(QStringLiteral("Host"), QStringLiteral("legacy-loses"));
+    settings.setValue(QStringLiteral("Network/Matching2Enabled"), true);
+    settings.setValue(QStringLiteral("BloodborneSummon/LocationMode"),
+                      QStringLiteral("SameArea"));
+    settings.setValue(QStringLiteral("Debug/BloodborneSummonTrace"), true);
+    settings.setValue(QStringLiteral("Accounts/AdminsList"),
+                      QStringLiteral("Izuku,Test"));
+    settings.sync();
+  }
+  ConfigManager grouped;
+  CHECK(grouped.Load(groupedPath));
+  CHECK(grouped.GetHost() == QStringLiteral("127.1.2.3"));
+  CHECK(grouped.IsMatching2Enabled());
+  CHECK(grouped.GetBloodborneSummonLocationMode() ==
+        QStringLiteral("SameArea"));
+  CHECK(grouped.IsBloodborneSummonTraceEnabled());
+  CHECK(grouped.IsAdmin(QStringLiteral("Izuku")));
+
+  const QString generatedPath =
+      temporary.filePath(QStringLiteral("generated.cfg"));
+  ConfigManager generated;
+  CHECK(generated.Load(generatedPath));
+  QSettings generatedSettings(generatedPath, QSettings::IniFormat);
+  CHECK(generatedSettings.contains(QStringLiteral("Server/Host")));
+  CHECK(generatedSettings.contains(QStringLiteral("Network/Matching2Enabled")));
+  CHECK(generatedSettings.contains(
+      QStringLiteral("BloodborneSummon/LocationMode")));
+  CHECK(generatedSettings.value(QStringLiteral("BloodborneSummon/LocationMode"))
+            .toString() == QStringLiteral("Vanilla"));
+  CHECK(!generatedSettings.contains(QStringLiteral("BloodborneSeamlessCoop")));
+
+  std::cout << "Config compatibility test passed\n";
+  return 0;
+}

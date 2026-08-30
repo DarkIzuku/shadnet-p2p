@@ -1,1 +1,14 @@
-// SPDX-FileCopyrightText: Copyright 2026 shadNet Project\r\n// SPDX-License-Identifier: GPL-2.0-or-later\r\n#pragma once\r\n\r\nclass QHttpServer;\r\nclass Database;\r\nclass QString;\r\n\r\nnamespace WebApiRoutes {\r\n\r\nvoid RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QString& locationMode,\r\n                              bool summonTrace, Database* websiteMetricsDatabase = nullptr);\r\n\r\n} // namespace WebApiRoutes\r\n
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+class QHttpServer;
+class Database;
+class QString;
+
+namespace WebApiRoutes {
+
+void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QString& locationMode,
+                              bool summonTrace, Database* websiteMetricsDatabase = nullptr);
+
+} // namespace WebApiRoutes

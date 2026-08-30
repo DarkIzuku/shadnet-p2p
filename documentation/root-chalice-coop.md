@@ -1,1 +1,44 @@
-# Root Chalice co-op investigation\r\n\r\n## Current boundary\r\n\r\nThe captured Root Chalice run reaches summon discovery, every shadNet filter,\r\nroom creation, claim delivery, signaling `ESTABLISHED`, and\r\n`MUTUAL_ACTIVATED`. Unlike the vanilla Chalice control, the Root guest does not\r\nsubsequently call `sceNpMatching2JoinRoom`.\r\n\r\nThe current shadNet implementation stores the original\r\n`/summon_messenger/create` JSON and returns it without rebuilding its members.\r\nUnknown top-level members, nested objects and arrays, opaque `SummonData`, and\r\nunsigned game-owned character identifiers are therefore preserved. The only\r\ndocumented response-side modification is the version-3 availability count at\r\ndecoded `SummonData` offset `0x79`; location spoofing remains exclusive to the\r\nseparate seamless-anywhere path. Claim delivery likewise copies raw members\r\nfrom `/summon_messenger/request` and replaces only the response envelope.\r\n\r\nThis rules out a general loss of Root fields in the broker, but it does not\r\nprove why Bloodborne declines to submit `JoinRoom`. The cause remains after the\r\nREST broker and before the guest's NP JoinRoom API call. No server-side forced\r\njoin, Root-specific ChannelId, glyph, account, delay, or fabricated field is\r\nsafe at this boundary.\r\n\r\n## Diagnostic\r\n\r\nSet the following temporarily and reproduce one vanilla Chalice plus one Root\r\nChalice with the same two clients:\r\n\r\n```ini\r\n[Debug]\r\nBloodborneSummonTrace=true\r\n```\r\n\r\nThe `[BLOODBORNE SUMMON TRACE]` records include sanitized request and response\r\nJSON metadata, body sizes and SHA-256 values, host-placement size/hash, channel\r\nidentity, broker state, and every discovery filter. Session identifiers,\r\npasswords and opaque blobs are redacted to length and SHA-256 metadata.\r\n\r\nThe next useful client-side diagnostic must observe Bloodborne's decision after\r\nsignaling activation and before its call to `sceNpMatching2JoinRoom`. It should\r\nreuse already verified Bloodborne 1.09 trace sites, not force the call or guess\r\nnew offsets. The cumulative readback build is intentionally left unchanged by\r\nthis server-only work.\r\n
+# Root Chalice co-op investigation
+
+## Current boundary
+
+The captured Root Chalice run reaches summon discovery, every shadNet filter,
+room creation, claim delivery, signaling `ESTABLISHED`, and
+`MUTUAL_ACTIVATED`. Unlike the vanilla Chalice control, the Root guest does not
+subsequently call `sceNpMatching2JoinRoom`.
+
+The current shadNet implementation stores the original
+`/summon_messenger/create` JSON and returns it without rebuilding its members.
+Unknown top-level members, nested objects and arrays, opaque `SummonData`, and
+unsigned game-owned character identifiers are therefore preserved. The only
+documented response-side modification is the version-3 availability count at
+decoded `SummonData` offset `0x79`; location spoofing remains exclusive to the
+separate seamless-anywhere path. Claim delivery likewise copies raw members
+from `/summon_messenger/request` and replaces only the response envelope.
+
+This rules out a general loss of Root fields in the broker, but it does not
+prove why Bloodborne declines to submit `JoinRoom`. The cause remains after the
+REST broker and before the guest's NP JoinRoom API call. No server-side forced
+join, Root-specific ChannelId, glyph, account, delay, or fabricated field is
+safe at this boundary.
+
+## Diagnostic
+
+Set the following temporarily and reproduce one vanilla Chalice plus one Root
+Chalice with the same two clients:
+
+```ini
+[Debug]
+BloodborneSummonTrace=true
+```
+
+The `[BLOODBORNE SUMMON TRACE]` records include sanitized request and response
+JSON metadata, body sizes and SHA-256 values, host-placement size/hash, channel
+identity, broker state, and every discovery filter. Session identifiers,
+passwords and opaque blobs are redacted to length and SHA-256 metadata.
+
+The next useful client-side diagnostic must observe Bloodborne's decision after
+signaling activation and before its call to `sceNpMatching2JoinRoom`. It should
+reuse already verified Bloodborne 1.09 trace sites, not force the call or guess
+new offsets. The cumulative readback build is intentionally left unchanged by
+this server-only work.

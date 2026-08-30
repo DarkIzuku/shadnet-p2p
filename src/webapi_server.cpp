@@ -1,1 +1,246 @@
-// SPDX-FileCopyrightText: Copyright 2026 shadNet Project\r\n// SPDX-License-Identifier: GPL-2.0-or-later\r\n#include "webapi_server.h"\r\n\r\n#include <utility>\r\n\r\n#include <QDebug>\r\n#include <QHostAddress>\r\n#include <QHttpServerRequest>\r\n#include <QHttpServerResponder>\r\n#include <QHttpServerResponse>\r\n#include <QJsonDocument>\r\n#include <QJsonObject>\r\n#include <QUrl>\r\n#include <webapi_routes_users.h>\r\n#include "bloodborne_bootstrap.h"\r\n#include "bloodborne_reference_proxy.h"\r\n#include "bloodborne_ssinfo_reference.h"\r\n#include "webapi_auth.h"\r\n#include "webapi_routes_bloodborne.h"\r\n#include "webapi_routes_bloodborne_bootstrap.h"\r\n#include "webapi_routes_presence.h"\r\n#include "webapi_routes_profile.h"\r\n#include "webapi_routes_session.h"\r\n\r\nnamespace {\r\n\r\nQString MethodName(QHttpServerRequest::Method method) {\r\n    switch (method) {\r\n    case QHttpServerRequest::Method::Get:\r\n        return QStringLiteral("GET");\r\n    case QHttpServerRequest::Method::Post:\r\n        return QStringLiteral("POST");\r\n    case QHttpServerRequest::Method::Put:\r\n        return QStringLiteral("PUT");\r\n    case QHttpServerRequest::Method::Delete:\r\n        return QStringLiteral("DELETE");\r\n    default:\r\n        return QString::number(static_cast<int>(method));\r\n    }\r\n}\r\n\r\n} // namespace\r\n\r\nWebApiServer::WebApiServer(QObject* parent) : QObject(parent) {}\r\nWebApiServer::~WebApiServer() = default;\r\n\r\nbool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedState* shared) {\r\n    m_config = config;\r\n    m_shared = shared;\r\n\r\n    if (m_config->IsBloodborneReferenceProxyEnabled() &&\r\n        !m_config->IsBloodborneBootstrapEnabled()) {\r\n        qCritical() << "BloodborneReferenceProxyEnabled requires BloodborneBootstrapEnabled=true";\r\n        return false;\r\n    }\r\n\r\n    if (m_config->IsBloodborneBootstrapEnabled()) {\r\n        const QUrl publicUrl(m_config->GetBloodbornePublicBaseUrl());\r\n        if (!publicUrl.isValid() || publicUrl.host().isEmpty() ||\r\n            (publicUrl.scheme() != QStringLiteral("http") &&\r\n             publicUrl.scheme() != QStringLiteral("https")) ||\r\n            (!publicUrl.path().isEmpty() && publicUrl.path() != QStringLiteral("/")) ||\r\n            !publicUrl.query().isEmpty() || !publicUrl.fragment().isEmpty()) {\r\n            qCritical().noquote()\r\n                << "Bloodborne bootstrap is enabled, but BloodbornePublicBaseUrl is not a valid "\r\n                   "http(s) base URL:"\r\n                << m_config->GetBloodbornePublicBaseUrl();\r\n            return false;\r\n        }\r\n\r\n        if (m_config->GetBloodborneGhostLifetimeSeconds() < 60 ||\r\n            m_config->GetBloodborneGhostLifetimeSeconds() > 604800) {\r\n            qCritical() << "BloodborneGhostLifetimeSeconds must be between 60 and 604800";\r\n            return false;\r\n        }\r\n\r\n        QString validationError;\r\n        QByteArray decodedXml;\r\n        if (m_config->IsBloodborneReferenceProxyEnabled()) {\r\n            if (!Bloodborne::ValidateReferenceServerStatusInfo(&validationError, &decodedXml)) {\r\n                qCritical().noquote() << "Bloodborne bootstrap reference ss.info validation failed:"\r\n                                      << validationError;\r\n                return false;\r\n            }\r\n            m_bloodborneServerStatusInfo = Bloodborne::ReferenceServerStatusInfo();\r\n            qInfo().nospace().noquote()\r\n                << "Bloodborne bootstrap: serving reference Base64 ss.info bytes="\r\n                << m_bloodborneServerStatusInfo.size()\r\n                << " decoded_xml_bytes=" << decodedXml.size();\r\n        } else {\r\n            m_bloodborneServerStatusInfo = Bloodborne::BuildServerStatusInfo(\r\n                m_config->GetBloodbornePublicBaseUrl(), &decodedXml, &validationError);\r\n            if (m_bloodborneServerStatusInfo.isEmpty()) {\r\n                qCritical().noquote()\r\n                    << "Bloodborne bootstrap local ss.info generation failed:" << validationError;\r\n                return false;\r\n            }\r\n            qInfo().nospace().noquote()\r\n                << "Bloodborne bootstrap: serving local Base64 ss.info base="\r\n                << m_config->GetBloodbornePublicBaseUrl()\r\n                << " api_count=37 decoded_bytes=" << decodedXml.size()\r\n                << " encoded_bytes=" << m_bloodborneServerStatusInfo.size();\r\n        }\r\n\r\n        if (m_config->IsBloodborneWelcomeNoticeEnabled()) {\r\n            qInfo().nospace().noquote()\r\n                << "Bloodborne welcome notice: enabled id=" << Bloodborne::WelcomeNoticeId\r\n                << " title_bytes=" << m_config->GetBloodborneWelcomeNoticeTitle().toUtf8().size()\r\n                << " body_bytes=" << m_config->GetBloodborneWelcomeNoticeBody().toUtf8().size();\r\n        } else {\r\n            qInfo().noquote()\r\n                << "Bloodborne welcome notice: disabled; normal NoticeList remains empty";\r\n        }\r\n\r\n        if (m_config->IsBloodborneWelcomeMessageEnabled() &&\r\n            !m_config->GetBloodborneWelcomeMessage().isEmpty()) {\r\n            const QByteArray messageBytes = m_config->GetBloodborneWelcomeMessage().toUtf8();\r\n            qInfo().nospace().noquote()\r\n                << "Bloodborne welcome message: enabled body_bytes=" << messageBytes.size()\r\n                << " encoded_bytes=" << messageBytes.toBase64().size();\r\n        }\r\n\r\n        if (m_config->IsBloodborneReferenceProxyEnabled()) {\r\n            const QUrl upstreamUrl(m_config->GetBloodborneReferenceProxyUrl());\r\n            if (!upstreamUrl.isValid() || upstreamUrl.host().isEmpty() ||\r\n                (upstreamUrl.scheme() != QStringLiteral("http") &&\r\n                 upstreamUrl.scheme() != QStringLiteral("https")) ||\r\n                (!upstreamUrl.path().isEmpty() && upstreamUrl.path() != QStringLiteral("/")) ||\r\n                !upstreamUrl.query().isEmpty() || !upstreamUrl.fragment().isEmpty()) {\r\n                qCritical().noquote()\r\n                    << "BloodborneReferenceProxyUrl is not a valid http(s) base URL:"\r\n                    << m_config->GetBloodborneReferenceProxyUrl();\r\n                return false;\r\n            }\r\n\r\n            Bloodborne::ReferenceProxy::Options options;\r\n            options.upstreamUrl = upstreamUrl;\r\n            m_bloodborneReferenceProxy =\r\n                std::make_unique<Bloodborne::ReferenceProxy>(std::move(options), this);\r\n            QString proxyError;\r\n            if (!m_bloodborneReferenceProxy->Initialize(&proxyError)) {\r\n                qCritical().noquote()\r\n                    << "Bloodborne reference proxy failed to initialize:" << proxyError;\r\n                return false;\r\n            }\r\n            qWarning().noquote()\r\n                << "Bloodborne reference proxy ENABLED - development capture mode; upstream="\r\n                << upstreamUrl.toString(QUrl::RemovePath | QUrl::StripTrailingSlash);\r\n        }\r\n    }\r\n\r\n    m_db = std::make_unique<Database>(QStringLiteral("webapi_main"));\r\n    if (!m_db->Open(dbPath)) {\r\n        qCritical() << "WebApiServer: failed to open database at" << dbPath;\r\n        return false;\r\n    }\r\n\r\n    m_http = std::make_unique<QHttpServer>(this);\r\n    RegisterRoutes();\r\n\r\n    m_tcp = std::make_unique<QTcpServer>(this);\r\n\r\n    const QString host = m_config->GetHost();\r\n    const quint16 port = m_config->GetWebApiPort().toUShort();\r\n    if (!m_tcp->listen(QHostAddress(host), port)) {\r\n        qCritical() << "WebApiServer: failed to bind" << host << ":" << port << "—"\r\n                    << m_tcp->errorString();\r\n        return false;\r\n    }\r\n\r\n    if (!m_http->bind(m_tcp.get())) {\r\n        qCritical() << "WebApiServer: QHttpServer failed to attach to listener";\r\n        return false;\r\n    }\r\n\r\n    qInfo().nospace().noquote() << "WebApiServer listening on: " << host << ":" << port;\r\n    return true;\r\n}\r\n\r\nvoid WebApiServer::RegisterRoutes() {\r\n    m_http->route("/status", [](const QHttpServerRequest&) {\r\n        QJsonObject body;\r\n        body.insert("ok", true);\r\n        body.insert("service", "shadnet-webapi");\r\n        return QHttpServerResponse{"application/json",\r\n                                   QJsonDocument(body).toJson(QJsonDocument::Compact),\r\n                                   QHttpServerResponse::StatusCode::Ok};\r\n    });\r\n\r\n    // user routes\r\n    WebApiRoutes::RegisterUserRoutes(*m_http, *m_db, *m_shared);\r\n    WebApiRoutes::RegisterProfileRoutes(*m_http, *m_db, *m_shared);\r\n    WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);\r\n    WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);\r\n    if (m_config->IsBloodborneBootstrapEnabled()) {\r\n        Bloodborne::WelcomeNotice welcomeNotice;\r\n        welcomeNotice.enabled = m_config->IsBloodborneWelcomeNoticeEnabled();\r\n        welcomeNotice.title = m_config->GetBloodborneWelcomeNoticeTitle();\r\n        welcomeNotice.body = m_config->GetBloodborneWelcomeNoticeBody();\r\n        Bloodborne::WelcomeMessage welcomeMessage;\r\n        welcomeMessage.enabled = m_config->IsBloodborneWelcomeMessageEnabled();\r\n        welcomeMessage.body = m_config->GetBloodborneWelcomeMessage();\r\n        WebApiRoutes::RegisterBloodborneBootstrapRoutes(\r\n            *m_http, *m_db, *m_shared, m_config->GetBloodbornePublicBaseUrl(),\r\n            m_bloodborneServerStatusInfo, m_config->IsBloodborneReferenceProxyEnabled(),\r\n            welcomeNotice, welcomeMessage, m_config->GetBloodborneGhostLifetimeSeconds(),\r\n            m_config->IsBloodborneWebsiteEnabled());\r\n    }\r\n    WebApiRoutes::RegisterBloodborneRoutes(\r\n        *m_http, m_config->IsBloodborneSeamlessCoopEnabled(),\r\n        m_config->GetBloodborneSummonLocationMode(), m_config->IsBloodborneSummonTraceEnabled(),\r\n        m_config->IsBloodborneWebsiteEnabled() ? m_db.get() : nullptr);\r\n\r\n    m_http->setMissingHandler(\r\n        this, [this](const QHttpServerRequest& req, QHttpServerResponder& responder) {\r\n            if (m_bloodborneReferenceProxy != nullptr &&\r\n                Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {\r\n                m_bloodborneReferenceProxy->Forward(req, std::move(responder));\r\n                return;\r\n            }\r\n\r\n            if (m_config->IsBloodborneBootstrapEnabled() &&\r\n                !m_config->IsBloodborneReferenceProxyEnabled() &&\r\n                Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {\r\n                qWarning().noquote()\r\n                    << "[BLOODBORNE LOCAL UNIMPLEMENTED]"\r\n                    << "method=" + MethodName(req.method()) << "path=" + req.url().path()\r\n                    << "query=" + req.url().query(QUrl::FullyEncoded);\r\n            }\r\n\r\n            qWarning() << "WebAPI: unhandled" << req.method() << req.url().path()\r\n                       << "(query:" << req.url().query() << ")";\r\n\r\n            QJsonObject errorObj;\r\n            errorObj.insert("code", static_cast<qint64>(0x80920005));\r\n            errorObj.insert("message", QStringLiteral("Endpoint not implemented"));\r\n            QJsonObject body;\r\n            body.insert("error", errorObj);\r\n            responder.sendResponse(QHttpServerResponse{\r\n                "application/json",\r\n                QJsonDocument(body).toJson(QJsonDocument::Compact),\r\n                QHttpServerResponder::StatusCode::NotFound,\r\n            });\r\n        });\r\n}\r\n
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "webapi_server.h"
+
+#include <utility>
+
+#include <QDebug>
+#include <QHostAddress>
+#include <QHttpServerRequest>
+#include <QHttpServerResponder>
+#include <QHttpServerResponse>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUrl>
+#include <webapi_routes_users.h>
+#include "bloodborne_bootstrap.h"
+#include "bloodborne_reference_proxy.h"
+#include "bloodborne_ssinfo_reference.h"
+#include "webapi_auth.h"
+#include "webapi_routes_bloodborne.h"
+#include "webapi_routes_bloodborne_bootstrap.h"
+#include "webapi_routes_presence.h"
+#include "webapi_routes_profile.h"
+#include "webapi_routes_session.h"
+
+namespace {
+
+QString MethodName(QHttpServerRequest::Method method) {
+    switch (method) {
+    case QHttpServerRequest::Method::Get:
+        return QStringLiteral("GET");
+    case QHttpServerRequest::Method::Post:
+        return QStringLiteral("POST");
+    case QHttpServerRequest::Method::Put:
+        return QStringLiteral("PUT");
+    case QHttpServerRequest::Method::Delete:
+        return QStringLiteral("DELETE");
+    default:
+        return QString::number(static_cast<int>(method));
+    }
+}
+
+} // namespace
+
+WebApiServer::WebApiServer(QObject* parent) : QObject(parent) {}
+WebApiServer::~WebApiServer() = default;
+
+bool WebApiServer::Start(ConfigManager* config, const QString& dbPath, SharedState* shared) {
+    m_config = config;
+    m_shared = shared;
+
+    if (m_config->IsBloodborneReferenceProxyEnabled() &&
+        !m_config->IsBloodborneBootstrapEnabled()) {
+        qCritical() << "BloodborneReferenceProxyEnabled requires BloodborneBootstrapEnabled=true";
+        return false;
+    }
+
+    if (m_config->IsBloodborneBootstrapEnabled()) {
+        const QUrl publicUrl(m_config->GetBloodbornePublicBaseUrl());
+        if (!publicUrl.isValid() || publicUrl.host().isEmpty() ||
+            (publicUrl.scheme() != QStringLiteral("http") &&
+             publicUrl.scheme() != QStringLiteral("https")) ||
+            (!publicUrl.path().isEmpty() && publicUrl.path() != QStringLiteral("/")) ||
+            !publicUrl.query().isEmpty() || !publicUrl.fragment().isEmpty()) {
+            qCritical().noquote()
+                << "Bloodborne bootstrap is enabled, but BloodbornePublicBaseUrl is not a valid "
+                   "http(s) base URL:"
+                << m_config->GetBloodbornePublicBaseUrl();
+            return false;
+        }
+
+        if (m_config->GetBloodborneGhostLifetimeSeconds() < 60 ||
+            m_config->GetBloodborneGhostLifetimeSeconds() > 604800) {
+            qCritical() << "BloodborneGhostLifetimeSeconds must be between 60 and 604800";
+            return false;
+        }
+
+        QString validationError;
+        QByteArray decodedXml;
+        if (m_config->IsBloodborneReferenceProxyEnabled()) {
+            if (!Bloodborne::ValidateReferenceServerStatusInfo(&validationError, &decodedXml)) {
+                qCritical().noquote() << "Bloodborne bootstrap reference ss.info validation failed:"
+                                      << validationError;
+                return false;
+            }
+            m_bloodborneServerStatusInfo = Bloodborne::ReferenceServerStatusInfo();
+            qInfo().nospace().noquote()
+                << "Bloodborne bootstrap: serving reference Base64 ss.info bytes="
+                << m_bloodborneServerStatusInfo.size()
+                << " decoded_xml_bytes=" << decodedXml.size();
+        } else {
+            m_bloodborneServerStatusInfo = Bloodborne::BuildServerStatusInfo(
+                m_config->GetBloodbornePublicBaseUrl(), &decodedXml, &validationError);
+            if (m_bloodborneServerStatusInfo.isEmpty()) {
+                qCritical().noquote()
+                    << "Bloodborne bootstrap local ss.info generation failed:" << validationError;
+                return false;
+            }
+            qInfo().nospace().noquote()
+                << "Bloodborne bootstrap: serving local Base64 ss.info base="
+                << m_config->GetBloodbornePublicBaseUrl()
+                << " api_count=37 decoded_bytes=" << decodedXml.size()
+                << " encoded_bytes=" << m_bloodborneServerStatusInfo.size();
+        }
+
+        if (m_config->IsBloodborneWelcomeNoticeEnabled()) {
+            qInfo().nospace().noquote()
+                << "Bloodborne welcome notice: enabled id=" << Bloodborne::WelcomeNoticeId
+                << " title_bytes=" << m_config->GetBloodborneWelcomeNoticeTitle().toUtf8().size()
+                << " body_bytes=" << m_config->GetBloodborneWelcomeNoticeBody().toUtf8().size();
+        } else {
+            qInfo().noquote()
+                << "Bloodborne welcome notice: disabled; normal NoticeList remains empty";
+        }
+
+        if (m_config->IsBloodborneWelcomeMessageEnabled() &&
+            !m_config->GetBloodborneWelcomeMessage().isEmpty()) {
+            const QByteArray messageBytes = m_config->GetBloodborneWelcomeMessage().toUtf8();
+            qInfo().nospace().noquote()
+                << "Bloodborne welcome message: enabled body_bytes=" << messageBytes.size()
+                << " encoded_bytes=" << messageBytes.toBase64().size();
+        }
+
+        if (m_config->IsBloodborneReferenceProxyEnabled()) {
+            const QUrl upstreamUrl(m_config->GetBloodborneReferenceProxyUrl());
+            if (!upstreamUrl.isValid() || upstreamUrl.host().isEmpty() ||
+                (upstreamUrl.scheme() != QStringLiteral("http") &&
+                 upstreamUrl.scheme() != QStringLiteral("https")) ||
+                (!upstreamUrl.path().isEmpty() && upstreamUrl.path() != QStringLiteral("/")) ||
+                !upstreamUrl.query().isEmpty() || !upstreamUrl.fragment().isEmpty()) {
+                qCritical().noquote()
+                    << "BloodborneReferenceProxyUrl is not a valid http(s) base URL:"
+                    << m_config->GetBloodborneReferenceProxyUrl();
+                return false;
+            }
+
+            Bloodborne::ReferenceProxy::Options options;
+            options.upstreamUrl = upstreamUrl;
+            m_bloodborneReferenceProxy =
+                std::make_unique<Bloodborne::ReferenceProxy>(std::move(options), this);
+            QString proxyError;
+            if (!m_bloodborneReferenceProxy->Initialize(&proxyError)) {
+                qCritical().noquote()
+                    << "Bloodborne reference proxy failed to initialize:" << proxyError;
+                return false;
+            }
+            qWarning().noquote()
+                << "Bloodborne reference proxy ENABLED - development capture mode; upstream="
+                << upstreamUrl.toString(QUrl::RemovePath | QUrl::StripTrailingSlash);
+        }
+    }
+
+    m_db = std::make_unique<Database>(QStringLiteral("webapi_main"));
+    if (!m_db->Open(dbPath)) {
+        qCritical() << "WebApiServer: failed to open database at" << dbPath;
+        return false;
+    }
+
+    m_http = std::make_unique<QHttpServer>(this);
+    RegisterRoutes();
+
+    m_tcp = std::make_unique<QTcpServer>(this);
+
+    const QString host = m_config->GetHost();
+    const quint16 port = m_config->GetWebApiPort().toUShort();
+    if (!m_tcp->listen(QHostAddress(host), port)) {
+        qCritical() << "WebApiServer: failed to bind" << host << ":" << port << "—"
+                    << m_tcp->errorString();
+        return false;
+    }
+
+    if (!m_http->bind(m_tcp.get())) {
+        qCritical() << "WebApiServer: QHttpServer failed to attach to listener";
+        return false;
+    }
+
+    qInfo().nospace().noquote() << "WebApiServer listening on: " << host << ":" << port;
+    return true;
+}
+
+void WebApiServer::RegisterRoutes() {
+    m_http->route("/status", [](const QHttpServerRequest&) {
+        QJsonObject body;
+        body.insert("ok", true);
+        body.insert("service", "shadnet-webapi");
+        return QHttpServerResponse{"application/json",
+                                   QJsonDocument(body).toJson(QJsonDocument::Compact),
+                                   QHttpServerResponse::StatusCode::Ok};
+    });
+
+    // user routes
+    WebApiRoutes::RegisterUserRoutes(*m_http, *m_db, *m_shared);
+    WebApiRoutes::RegisterProfileRoutes(*m_http, *m_db, *m_shared);
+    WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);
+    WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);
+    if (m_config->IsBloodborneBootstrapEnabled()) {
+        Bloodborne::WelcomeNotice welcomeNotice;
+        welcomeNotice.enabled = m_config->IsBloodborneWelcomeNoticeEnabled();
+        welcomeNotice.title = m_config->GetBloodborneWelcomeNoticeTitle();
+        welcomeNotice.body = m_config->GetBloodborneWelcomeNoticeBody();
+        Bloodborne::WelcomeMessage welcomeMessage;
+        welcomeMessage.enabled = m_config->IsBloodborneWelcomeMessageEnabled();
+        welcomeMessage.body = m_config->GetBloodborneWelcomeMessage();
+        WebApiRoutes::RegisterBloodborneBootstrapRoutes(
+            *m_http, *m_db, *m_shared, m_config->GetBloodbornePublicBaseUrl(),
+            m_bloodborneServerStatusInfo, m_config->IsBloodborneReferenceProxyEnabled(),
+            welcomeNotice, welcomeMessage, m_config->GetBloodborneGhostLifetimeSeconds(),
+            m_config->IsBloodborneWebsiteEnabled());
+    }
+    WebApiRoutes::RegisterBloodborneRoutes(
+        *m_http, m_config->IsBloodborneSeamlessCoopEnabled(),
+        m_config->GetBloodborneSummonLocationMode(), m_config->IsBloodborneSummonTraceEnabled(),
+        m_config->IsBloodborneWebsiteEnabled() ? m_db.get() : nullptr);
+
+    m_http->setMissingHandler(
+        this, [this](const QHttpServerRequest& req, QHttpServerResponder& responder) {
+            if (m_bloodborneReferenceProxy != nullptr &&
+                Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {
+                m_bloodborneReferenceProxy->Forward(req, std::move(responder));
+                return;
+            }
+
+            if (m_config->IsBloodborneBootstrapEnabled() &&
+                !m_config->IsBloodborneReferenceProxyEnabled() &&
+                Bloodborne::ReferenceProxy::IsReferenceBackendPath(req.url().path())) {
+                qWarning().noquote()
+                    << "[BLOODBORNE LOCAL UNIMPLEMENTED]"
+                    << "method=" + MethodName(req.method()) << "path=" + req.url().path()
+                    << "query=" + req.url().query(QUrl::FullyEncoded);
+            }
+
+            qWarning() << "WebAPI: unhandled" << req.method() << req.url().path()
+                       << "(query:" << req.url().query() << ")";
+
+            QJsonObject errorObj;
+            errorObj.insert("code", static_cast<qint64>(0x80920005));
+            errorObj.insert("message", QStringLiteral("Endpoint not implemented"));
+            QJsonObject body;
+            body.insert("error", errorObj);
+            responder.sendResponse(QHttpServerResponse{
+                "application/json",
+                QJsonDocument(body).toJson(QJsonDocument::Compact),
+                QHttpServerResponder::StatusCode::NotFound,
+            });
+        });
+}

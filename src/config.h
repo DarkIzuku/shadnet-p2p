@@ -1,1 +1,250 @@
-// SPDX-FileCopyrightText: Copyright 2019-2026 rpcsn Project\n// SPDX-FileCopyrightText: Copyright 2026 shadNet Project\n// SPDX-License-Identifier: GPL-2.0-or-later\n#pragma once\n#include <QReadLocker>\n#include <QReadWriteLock>\n#include <QSet>\n#include <QString>\n#include <QStringList>\n#include <QWriteLocker>\n\nclass ConfigManager {\npublic:\n    bool Load(const QString& path = "shadnet.cfg");\n    void Reload(const QString& path = "shadnet.cfg");\n\n    QString GetHost() const {\n        QReadLocker lk(&m_lock);\n        return m_host;\n    }\n    QString GetUnsecuredPort() const {\n        QReadLocker lk(&m_lock);\n        return m_unsecured_port;\n    }\n    QString GetMatchingUdpPort() const {\n        QReadLocker lk(&m_lock);\n        return m_matchingUdpPort;\n    }\n    QString GetWebApiPort() const {\n        QReadLocker lk(&m_lock);\n        return m_webapiPort;\n    }\n    bool IsStatsEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_statsEnabled;\n    }\n    QString GetStatsPort() const {\n        QReadLocker lk(&m_lock);\n        return m_statsPort;\n    }\n    QString GetStatsPath() const {\n        QReadLocker lk(&m_lock);\n        return m_statsPath;\n    }\n    int GetStatsCacheLife() const {\n        QReadLocker lk(&m_lock);\n        return m_statsCacheLife;\n    }\n    bool IsMatching2Enabled() const {\n        QReadLocker lk(&m_lock);\n        return m_matching2Enabled;\n    }\n    bool IsBloodborneSeamlessCoopEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneSeamlessCoop;\n    }\n    QString GetBloodborneSummonLocationMode() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneSummonLocationMode;\n    }\n    bool IsBloodborneSummonTraceEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneSummonTraceEnabled;\n    }\n    bool IsBloodborneBootstrapEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneBootstrapEnabled;\n    }\n    QString GetBloodbornePublicBaseUrl() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodbornePublicBaseUrl;\n    }\n    bool IsBloodborneReferenceProxyEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneReferenceProxyEnabled;\n    }\n    QString GetBloodborneReferenceProxyUrl() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneReferenceProxyUrl;\n    }\n    bool IsBloodborneWelcomeNoticeEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWelcomeNoticeEnabled;\n    }\n    QString GetBloodborneWelcomeNoticeTitle() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWelcomeNoticeTitle;\n    }\n    QString GetBloodborneWelcomeNoticeBody() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWelcomeNoticeBody;\n    }\n    bool IsBloodborneWelcomeMessageEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWelcomeMessageEnabled;\n    }\n    QString GetBloodborneWelcomeMessage() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWelcomeMessage;\n    }\n    int GetBloodborneGhostLifetimeSeconds() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneGhostLifetimeSeconds;\n    }\n    bool IsServerLogEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_serverLogEnabled;\n    }\n    QString GetServerLogDirectory() const {\n        QReadLocker lk(&m_lock);\n        return m_serverLogDirectory;\n    }\n    int GetServerLogKeepDays() const {\n        QReadLocker lk(&m_lock);\n        return m_serverLogKeepDays;\n    }\n    bool IsServerLogFlushImmediately() const {\n        QReadLocker lk(&m_lock);\n        return m_serverLogFlushImmediately;\n    }\n    bool IsBloodborneWebsiteEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteEnabled;\n    }\n    QString GetBloodborneWebsitePort() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsitePort;\n    }\n    bool IsBloodborneWebsiteRegistrationEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteRegistrationEnabled;\n    }\n    bool IsBloodborneWebsiteExternalAssetsEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteExternalAssetsEnabled;\n    }\n    QString GetBloodborneWebsiteExternalAssetsPath() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteExternalAssetsPath;\n    }\n    bool IsBloodborneWebsiteChatEnabled() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteChatEnabled;\n    }\n    int GetBloodborneWebsiteChatMaxMessageLength() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteChatMaxMessageLength;\n    }\n    int GetBloodborneWebsiteChatHistoryLimit() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteChatHistoryLimit;\n    }\n    int GetBloodborneWebsiteChatResetHours() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteChatResetHours;\n    }\n    int GetBloodborneWebsiteDownloadMaxFileSizeMiB() const {\n        QReadLocker lk(&m_lock);\n        return m_bloodborneWebsiteDownloadMaxFileSizeMiB;\n    }\n\n    bool IsEmailValidated() const {\n        QReadLocker lk(&m_lock);\n        return m_emailValidated;\n    }\n    bool IsBannedDomain(const QString& d) const {\n        QReadLocker lk(&m_lock);\n        return m_bannedDomains.contains(d.toLower());\n    }\n    bool IsAdmin(const QString& npid) const {\n        QReadLocker lk(&m_lock);\n        return m_adminsList.contains(npid);\n    }\n\n    // Returns true if registration is allowed for the given secret_key.\n    // When RegistrationSecretKey is empty, all registrations are allowed.\n    // When set, only requests carrying the matching key are accepted.\n    bool IsRegistrationAllowed(const QString& key) const {\n        QReadLocker lk(&m_lock);\n        return m_registrationSecretKey.isEmpty() ||\n               (!key.isEmpty() && key == m_registrationSecretKey);\n    }\n\n    void SetHost(const QString& v) {\n        QWriteLocker lk(&m_lock);\n        m_host = v;\n    }\n    void SetUnsecuredPort(const QString& v) {\n        QWriteLocker lk(&m_lock);\n        m_unsecured_port = v;\n    }\n    void SetEmailValidated(bool v) {\n        QWriteLocker lk(&m_lock);\n        m_emailValidated = v;\n    }\n    void SetAdminsList(const QStringList& v) {\n        QWriteLocker lk(&m_lock);\n        m_adminsList = v;\n    }\n    void LoadBannedDomains();\n\nprivate:\n    void Parse(const QString& path);\n\n    mutable QReadWriteLock m_lock;\n    QString m_path;\n\n    // config values\n    QString m_host = "0.0.0.0";\n    QString m_unsecured_port = "31313";\n    QString m_matchingUdpPort = "31314";\n    QString m_webapiPort = "31315";\n    bool m_statsEnabled = true;\n    bool m_matching2Enabled = true;\n    bool m_bloodborneSeamlessCoop = false;\n    QString m_bloodborneSummonLocationMode = "Vanilla";\n    bool m_bloodborneSummonTraceEnabled = false;\n    bool m_bloodborneBootstrapEnabled = false;\n    QString m_bloodbornePublicBaseUrl;\n    bool m_bloodborneReferenceProxyEnabled = false;\n    QString m_bloodborneReferenceProxyUrl = "http://thehuntersdream.com:18671";\n    bool m_bloodborneWelcomeNoticeEnabled = false;\n    QString m_bloodborneWelcomeNoticeTitle = "The Hunter's Dream";\n    QString m_bloodborneWelcomeNoticeBody = "Welcome to the private Bloodborne server.";\n    bool m_bloodborneWelcomeMessageEnabled = false;\n    QString m_bloodborneWelcomeMessage;\n    int m_bloodborneGhostLifetimeSeconds = 600;\n    bool m_serverLogEnabled = true;\n    QString m_serverLogDirectory = "logs";\n    int m_serverLogKeepDays = 30;\n    bool m_serverLogFlushImmediately = true;\n    bool m_bloodborneWebsiteEnabled = true;\n    QString m_bloodborneWebsitePort = "31316";\n    bool m_bloodborneWebsiteRegistrationEnabled = true;\n    bool m_bloodborneWebsiteExternalAssetsEnabled = true;\n    QString m_bloodborneWebsiteExternalAssetsPath = "web";\n    bool m_bloodborneWebsiteChatEnabled = true;\n    int m_bloodborneWebsiteChatMaxMessageLength = 400;\n    int m_bloodborneWebsiteChatHistoryLimit = 100;\n    int m_bloodborneWebsiteChatResetHours = 24;\n    int m_bloodborneWebsiteDownloadMaxFileSizeMiB = 512;\n    QString m_statsPort = "31320";\n    QString m_statsPath = "stats";\n    int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute\n    bool m_emailValidated = false;\n    QStringList m_adminsList;\n    QSet<QString> m_bannedDomains;\n    // When non-empty, registrations must supply this key or they are rejected.\n    QString m_registrationSecretKey;\n};\n
+// SPDX-FileCopyrightText: Copyright 2019-2026 rpcsn Project
+// SPDX-FileCopyrightText: Copyright 2026 shadNet Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#include <QReadLocker>
+#include <QReadWriteLock>
+#include <QSet>
+#include <QString>
+#include <QStringList>
+#include <QWriteLocker>
+
+class ConfigManager {
+public:
+    bool Load(const QString& path = "shadnet.cfg");
+    void Reload(const QString& path = "shadnet.cfg");
+
+    QString GetHost() const {
+        QReadLocker lk(&m_lock);
+        return m_host;
+    }
+    QString GetUnsecuredPort() const {
+        QReadLocker lk(&m_lock);
+        return m_unsecured_port;
+    }
+    QString GetMatchingUdpPort() const {
+        QReadLocker lk(&m_lock);
+        return m_matchingUdpPort;
+    }
+    QString GetWebApiPort() const {
+        QReadLocker lk(&m_lock);
+        return m_webapiPort;
+    }
+    bool IsStatsEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_statsEnabled;
+    }
+    QString GetStatsPort() const {
+        QReadLocker lk(&m_lock);
+        return m_statsPort;
+    }
+    QString GetStatsPath() const {
+        QReadLocker lk(&m_lock);
+        return m_statsPath;
+    }
+    int GetStatsCacheLife() const {
+        QReadLocker lk(&m_lock);
+        return m_statsCacheLife;
+    }
+    bool IsMatching2Enabled() const {
+        QReadLocker lk(&m_lock);
+        return m_matching2Enabled;
+    }
+    bool IsBloodborneSeamlessCoopEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneSeamlessCoop;
+    }
+    QString GetBloodborneSummonLocationMode() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneSummonLocationMode;
+    }
+    bool IsBloodborneSummonTraceEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneSummonTraceEnabled;
+    }
+    bool IsBloodborneBootstrapEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneBootstrapEnabled;
+    }
+    QString GetBloodbornePublicBaseUrl() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodbornePublicBaseUrl;
+    }
+    bool IsBloodborneReferenceProxyEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneReferenceProxyEnabled;
+    }
+    QString GetBloodborneReferenceProxyUrl() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneReferenceProxyUrl;
+    }
+    bool IsBloodborneWelcomeNoticeEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeNoticeEnabled;
+    }
+    QString GetBloodborneWelcomeNoticeTitle() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeNoticeTitle;
+    }
+    QString GetBloodborneWelcomeNoticeBody() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeNoticeBody;
+    }
+    bool IsBloodborneWelcomeMessageEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeMessageEnabled;
+    }
+    QString GetBloodborneWelcomeMessage() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWelcomeMessage;
+    }
+    int GetBloodborneGhostLifetimeSeconds() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneGhostLifetimeSeconds;
+    }
+    bool IsServerLogEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_serverLogEnabled;
+    }
+    QString GetServerLogDirectory() const {
+        QReadLocker lk(&m_lock);
+        return m_serverLogDirectory;
+    }
+    int GetServerLogKeepDays() const {
+        QReadLocker lk(&m_lock);
+        return m_serverLogKeepDays;
+    }
+    bool IsServerLogFlushImmediately() const {
+        QReadLocker lk(&m_lock);
+        return m_serverLogFlushImmediately;
+    }
+    bool IsBloodborneWebsiteEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteEnabled;
+    }
+    QString GetBloodborneWebsitePort() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsitePort;
+    }
+    bool IsBloodborneWebsiteRegistrationEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteRegistrationEnabled;
+    }
+    bool IsBloodborneWebsiteExternalAssetsEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteExternalAssetsEnabled;
+    }
+    QString GetBloodborneWebsiteExternalAssetsPath() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteExternalAssetsPath;
+    }
+    bool IsBloodborneWebsiteChatEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatEnabled;
+    }
+    int GetBloodborneWebsiteChatMaxMessageLength() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatMaxMessageLength;
+    }
+    int GetBloodborneWebsiteChatHistoryLimit() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatHistoryLimit;
+    }
+    int GetBloodborneWebsiteChatResetHours() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteChatResetHours;
+    }
+    int GetBloodborneWebsiteDownloadMaxFileSizeMiB() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneWebsiteDownloadMaxFileSizeMiB;
+    }
+
+    bool IsEmailValidated() const {
+        QReadLocker lk(&m_lock);
+        return m_emailValidated;
+    }
+    bool IsBannedDomain(const QString& d) const {
+        QReadLocker lk(&m_lock);
+        return m_bannedDomains.contains(d.toLower());
+    }
+    bool IsAdmin(const QString& npid) const {
+        QReadLocker lk(&m_lock);
+        return m_adminsList.contains(npid);
+    }
+
+    // Returns true if registration is allowed for the given secret_key.
+    // When RegistrationSecretKey is empty, all registrations are allowed.
+    // When set, only requests carrying the matching key are accepted.
+    bool IsRegistrationAllowed(const QString& key) const {
+        QReadLocker lk(&m_lock);
+        return m_registrationSecretKey.isEmpty() ||
+               (!key.isEmpty() && key == m_registrationSecretKey);
+    }
+
+    void SetHost(const QString& v) {
+        QWriteLocker lk(&m_lock);
+        m_host = v;
+    }
+    void SetUnsecuredPort(const QString& v) {
+        QWriteLocker lk(&m_lock);
+        m_unsecured_port = v;
+    }
+    void SetEmailValidated(bool v) {
+        QWriteLocker lk(&m_lock);
+        m_emailValidated = v;
+    }
+    void SetAdminsList(const QStringList& v) {
+        QWriteLocker lk(&m_lock);
+        m_adminsList = v;
+    }
+    void LoadBannedDomains();
+
+private:
+    void Parse(const QString& path);
+
+    mutable QReadWriteLock m_lock;
+    QString m_path;
+
+    // config values
+    QString m_host = "0.0.0.0";
+    QString m_unsecured_port = "31313";
+    QString m_matchingUdpPort = "31314";
+    QString m_webapiPort = "31315";
+    bool m_statsEnabled = true;
+    bool m_matching2Enabled = true;
+    bool m_bloodborneSeamlessCoop = false;
+    QString m_bloodborneSummonLocationMode = "Vanilla";
+    bool m_bloodborneSummonTraceEnabled = false;
+    bool m_bloodborneBootstrapEnabled = false;
+    QString m_bloodbornePublicBaseUrl;
+    bool m_bloodborneReferenceProxyEnabled = false;
+    QString m_bloodborneReferenceProxyUrl = "http://thehuntersdream.com:18671";
+    bool m_bloodborneWelcomeNoticeEnabled = false;
+    QString m_bloodborneWelcomeNoticeTitle = "The Hunter's Dream";
+    QString m_bloodborneWelcomeNoticeBody = "Welcome to the private Bloodborne server.";
+    bool m_bloodborneWelcomeMessageEnabled = false;
+    QString m_bloodborneWelcomeMessage;
+    int m_bloodborneGhostLifetimeSeconds = 600;
+    bool m_serverLogEnabled = true;
+    QString m_serverLogDirectory = "logs";
+    int m_serverLogKeepDays = 30;
+    bool m_serverLogFlushImmediately = true;
+    bool m_bloodborneWebsiteEnabled = true;
+    QString m_bloodborneWebsitePort = "31316";
+    bool m_bloodborneWebsiteRegistrationEnabled = true;
+    bool m_bloodborneWebsiteExternalAssetsEnabled = true;
+    QString m_bloodborneWebsiteExternalAssetsPath = "web";
+    bool m_bloodborneWebsiteChatEnabled = true;
+    int m_bloodborneWebsiteChatMaxMessageLength = 400;
+    int m_bloodborneWebsiteChatHistoryLimit = 100;
+    int m_bloodborneWebsiteChatResetHours = 24;
+    int m_bloodborneWebsiteDownloadMaxFileSizeMiB = 512;
+    QString m_statsPort = "31320";
+    QString m_statsPath = "stats";
+    int m_statsCacheLife = 30; // seconds the stats JSON is cached before recompute
+    bool m_emailValidated = false;
+    QStringList m_adminsList;
+    QSet<QString> m_bannedDomains;
+    // When non-empty, registrations must supply this key or they are rejected.
+    QString m_registrationSecretKey;
+};

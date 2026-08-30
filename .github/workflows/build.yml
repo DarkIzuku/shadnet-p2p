@@ -343,4 +343,3 @@ jobs:
               "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$release_tag"
           fi
         done
-

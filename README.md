@@ -1,1 +1,483 @@
-<!--\nSPDX-FileCopyrightText: 2026 shadNet Project\nSPDX-License-Identifier: GPL-2.0-or-later\n-->\n\n# Private Bloodborne co-op server\n\nThis shadNet fork provides the account, matchmaking, signaling, and WebAPI\nservices used by the matching [shadPS4 P2P fork](https://github.com/Wozzardman/shadp2p).\nThis guide sets up a small private server for Bloodborne's traditional or\nexperimental seamless co-op. The host rings the Beckoning Bell and a guest\nrings the Small Resonant Bell in both modes.\n\nThe simplest supported layout is one server and all players connected to the\nsame Tailscale tailnet. Tailscale encrypts traffic between the PCs and removes\nthe need to expose shadNet directly to the public Internet.\n\n> [!IMPORTANT]\n> The game protocol on TCP `31313` is not encrypted by shadNet itself. Use it\n> only on a trusted LAN or private tailnet. Do not forward these ports on your\n> router for this setup.\n\n## What runs where\n\n| Component | Computer | Purpose |\n| --- | --- | --- |\n| shadNet | One always-on PC | Accounts, matchmaking, STUN, and WebAPI |\n| shadPS4 P2P build | Every player's PC | Runs Bloodborne and sends peer traffic |\n| Tailscale | Server and every player's PC | Private connectivity between all PCs |\n\nThe shadNet machine may also be one of the playing PCs. Keep its server terminal\nopen for the entire session.\n\n## Ports and addresses\n\n| Protocol | Port | Used for |\n| --- | --- | --- |\n| TCP | `31313` | shadNet login and game protocol |\n| UDP | `31314` | matchmaking and STUN address discovery |\n| TCP | `31315` | WebAPI and Bloodborne summon broker |\r\n| TCP | `31316` | Optional integrated Bloodborne community website |\r\n| TCP | `31320` | Optional stats page; not required for co-op |\r\n\nThere are three addresses that are easy to confuse:\n\n- `0.0.0.0` is used only for shadNet's `Host` setting. It tells the server to\n  listen on all network interfaces.\n- The server's Tailscale address begins with `100.`. Every shadPS4 client uses\n  this address for **Server**, **WebAPI Server**, and `host_overrides.json`.\n- `127.0.0.1` means this computer only. Friends cannot connect to it.\n\nNever give players `0.0.0.0`, and do not use the server's public Internet IP.\n\n## 1. Create the tailnet\n\nInstall Tailscale on the server from the\n[official download page](https://tailscale.com/download). On Linux, the official\nquick install is:\n\n```bash\ncurl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up\n```\n\nFollow the login link, then obtain the server address:\n\n```bash\ntailscale ip -4\n```\n\nWrite down the returned `100.x.y.z` address. This guide uses\n`100.101.102.103` only as an example.\n\n### Invite the players\n\n1. Open the [Tailscale admin console](https://login.tailscale.com/admin/users).\n2. Select **Users**, then **Invite external users**.\n3. Enter each player's email address or choose **Copy invite link**.\n4. Assign the **Member** role.\n5. Have each player accept the invitation, install Tailscale, and sign in on\n   the PC that runs shadPS4.\n\nInvite every player into the same tailnet. Bloodborne traffic connects players\ndirectly, so sharing only the shadNet device is insufficient. Invitation links\nexpire; create a new link if a player cannot accept an old one.\n\nVerify connected machines with:\n\n```bash\ntailscale status\ntailscale ping <PLAYER_NAME_OR_100.x_ADDRESS>\n```\n\n## 2. Download and build shadNet\n\nUse a release package when this fork publishes one. To build from source, clone\nwith submodules:\n\n```bash\ngit clone --recursive https://github.com/Wozzardman/shadnet-p2p.git\ncd shadnet-p2p\n```\n\nIf the repository was cloned without `--recursive`, repair it with:\n\n```bash\ngit submodule update --init --recursive\n```\n\n### Ubuntu or Debian-based Linux\n\nInstall the build tools, Qt 6 HTTP server module, and SQLite driver:\n\n```bash\nsudo apt update\nsudo apt install git cmake ninja-build build-essential qt6-base-dev qt6-httpserver-dev libqt6sql6-sqlite\n```\n\n### Arch Linux and derivatives\n\n```bash\nsudo pacman -S --needed base-devel git cmake ninja qt6-base qt6-httpserver\n```\n\n### Build\n\nFrom the repository root:\n\n```bash\ncmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release\ncmake --build build --parallel\n```\n\nThe server executable, `worlds.cfg`, and `scoreboards.cfg` will be in `build/`.\nOn Windows, install Visual Studio 2022 with C++ tools and a Qt 6 MSVC kit that\ncontains Core, Network, SQL, Concurrent, and HTTP Server, then run the same\nCMake commands from a Developer PowerShell with `CMAKE_PREFIX_PATH` set to the\nQt kit directory.\n\n## 3. Create and edit the server configuration\n\nRun the server once from the repository root:\n\n```bash\n./build/shadnet\n```\n\nIt creates `build/shadnet.cfg` and `build/db/shadnet.db` because shadNet uses\nthe executable's directory for its runtime files. Press `Ctrl+C` to stop it,\nthen open `build/shadnet.cfg` in a text editor.\n\nNew installations generate grouped sections. You can also copy\r\n`shadnet.example.cfg` to `shadnet.cfg` and edit it. Existing flat `[General]`\r\nfiles remain fully supported; when both forms exist, the grouped key wins.\r\n\r\n```ini\r\n[Server]\r\nHost=0.0.0.0\r\nUnsecuredPort=31313\r\n\r\n[Network]\r\nMatching2Enabled=true\r\nMatchingUdpPort=31314\r\nWebApiPort=31315\r\n\r\n[Bloodborne]\r\nSeamlessCoop=false\r\nBootstrapEnabled=true\r\nPublicBaseUrl=http://100.101.102.103:31315\r\nReferenceProxyEnabled=false\r\nGhostLifetimeSeconds=600\r\n\r\n[BloodborneSummon]\r\nLocationMode=Vanilla\r\n\r\n[Website]\r\nEnabled=true\r\nPort=31316\r\nRegistrationEnabled=true\r\nExternalAssetsEnabled=true\r\nExternalAssetsPath=web\r\nChatEnabled=true\r\n\r\n[Downloads]\r\nMaxFileSizeMiB=512\r\n\r\n[Accounts]\r\nRegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE\r\n\r\n[Stats]\r\nEnabled=false\r\n\r\n[Debug]\r\nServerLogEnabled=true\r\nServerLogDirectory=logs\r\nServerLogKeepDays=30\r\nServerLogFlushImmediately=true\r\nBloodborneSummonTrace=false\r\n```\r\n\nshadNet does **not** generate the registration key. It is a private signup code\r\nchosen by the server owner, not a player password. Replace\r\n`YOUR_OWN_LONG_PRIVATE_CODE` with any long phrase you invent, using no spaces.\nThe account tool must be given that exact same value when registering a player.\nLeave the key set after setup to prevent uninvited account creation. Players do\nnot need it when logging in. Leave `EmailValidated` set to `false` unless email\nvalidation has been configured separately.\n\nLeaving `RegistrationSecretKey` empty enables open registration. In that case,\r\nthe final key argument is omitted from the registration command. Open\nregistration is not recommended for an ongoing server.\r\n\r\n### Server logs\r\n\r\nBy default, shadNet writes a second copy of Qt console messages to a UTF-8 log file for each\r\nserver launch. The default relative directory is alongside `shadnet.exe`:\r\n\r\n```text\r\nlogs/YYYY-MM-DD_HH-mm-ss/shadnet.log\r\n```\r\n\r\n`ServerLogDirectory` can instead be an absolute path. `ServerLogKeepDays=0` disables automatic\r\ncleanup; any positive value removes only older session directories bearing a shadNet session\r\nmarker. `ServerLogFlushImmediately=true` flushes after every message. Set\r\n`ServerLogEnabled=false` to keep the original console-only behavior.\r\n\n## Choose a co-op mode\n\nThe server and every shadPS4 client must use the same mode. Stop shadNet and all\nclients before changing it.\n\n### Traditional co-op\n\nTraditional mode keeps Bloodborne's normal area, boss, level, bell, death, and\nsession restrictions. Set this in `build/shadnet.cfg`:\n\n```ini\r\n[Bloodborne]\r\nSeamlessCoop=false\r\n```\r\n\nAlso make sure `SHADNET_BLOODBORNE_SEAMLESS_COOP` is not set in the terminal or\nservice that starts shadNet. On Linux:\n\n```bash\nunset SHADNET_BLOODBORNE_SEAMLESS_COOP\n./build/shadnet\n```\n\nSetting the configuration to `false` does not override an environment variable\nthat is still set to `1`.\n\n### Experimental seamless co-op\n\nSeamless mode lets the broker match bells from different maps and carries the\nhost's placement to the guest so the client can move the guest before the normal\nroom join. The persistent and recommended server setting is:\n\n```ini\r\n[Bloodborne]\r\nSeamlessCoop=true\r\n```\r\n\nThen restart shadNet normally:\n\n```bash\n./build/shadnet\n```\n\nFor a temporary test without editing the file, start the server with:\n\n```bash\nSHADNET_BLOODBORNE_SEAMLESS_COOP=1 ./build/shadnet\n```\n\nThe startup log must say `seamless co-op enabled` and `anywhere summons enabled`.\nEvery player must also start QtLauncher or BBLauncher with\r\n`SHADPS4_BLOODBORNE_SEAMLESS_COOP=1`; the matching client README has commands\nfor Linux, Windows, and macOS. The server trace variable is optional and is not\r\nneeded for normal seamless play.\r\n\r\n### Easier traditional co-op discovery\r\n\r\n`LocationMode` changes only which summon advertisements are discoverable. It\r\ndoes not change spawn placement, teleport players, enable seamless co-op, or\r\nmix different Chalice channels. `ChannelId`, password, bell type and matching\r\nlevel remain enforced in every mode.\r\n\r\nThe recommended traditional setting removes only the position/distance check:\r\n\r\n```ini\r\n[BloodborneSummon]\r\nLocationMode=SameRegion\r\n```\r\n\r\n`Vanilla` requires the same area, region and channel and keeps\r\n`DistanceThreshold`. `SameRegion` requires the same area, region and channel\r\nbut ignores position/distance. Experimental `SameArea` requires the same area\r\nand channel but ignores region and distance:\r\n\r\n```ini\r\n[BloodborneSummon]\r\nLocationMode=SameArea\r\n```\r\n\r\nOld configurations default to `Vanilla`. Restart shadNet after changing the\r\nmode. The startup log prints the active location mode.\r\n\r\nFor a temporary Root Chalice diagnostic, set\r\n`Debug/BloodborneSummonTrace=true` or start with\r\n`SHADNET_BLOODBORNE_SUMMON_TRACE=1`. The trace logs sanitized request/response\r\nmetadata and every discovery filter; session identifiers, passwords and opaque\r\ngame blobs are represented by lengths and SHA-256 hashes rather than their\r\ncontents.\r\n\nBell use and cross-map guest placement are working. Lantern travel after a\nco-op session is already established remains incomplete on the client side, so\ndo not expect the group to travel together from an active session yet.\n\n## 4. Start and test the server\n\nStart it again:\n\n```bash\n./build/shadnet\n```\n\nA remotely reachable setup should report listeners using `0.0.0.0`, including:\n\n```text\nUnsecured TCP listener on: 0.0.0.0:31313\nSTUN UDP listener on: 0.0.0.0:31314\nWebApiServer listening on: 0.0.0.0:31315\n```\n\nFrom another tailnet PC, open the following address after substituting the real\nserver Tailscale IP:\n\n```text\nhttp://100.101.102.103:31315/status\n```\n\nThe expected response is:\n\n```json\n{"ok":true,"service":"shadnet-webapi"}\n```\n\nIf the server firewall blocks access, allow the `shadnet` application or allow\nTCP `31313`, UDP `31314`, and TCP `31315` on the Tailscale/private interface.\nDo not expose TCP `31320` unless you intentionally enable the optional stats\npage.\n\n## 5. Create one account per player\n\nEach player needs a unique NP ID and email address. NP IDs are 3 to 16 letters,\nnumbers, hyphens, or underscores. Build the bundled account tool separately:\n\n```bash\ncd clientsample\ncmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release\ncmake --build build --parallel\n```\n\nWith shadNet still running in its own terminal, register each account from the\n`clientsample` directory. Use `127.0.0.1` when running the tool on the server:\n\n```bash\n./build/shadnet-sample 127.0.0.1 31313 register HunterOne CHOOSE_A_PASSWORD hunter1@example.com YOUR_OWN_LONG_PRIVATE_CODE\n```\n\nRepeat with a different NP ID, password, and email for every player. Account\nnames and emails are case-insensitively unique. Give each player only their own\nNP ID and password. `YOUR_OWN_LONG_PRIVATE_CODE` in the command must be replaced\nwith the exact registration key selected in the previous step.\n\nThe accounts live in `build/db/shadnet.db`. Back up that file while the server\nis stopped. If it is deleted or replaced, existing logins will stop working.\n\n## 6. Give players the client settings\n\nSend each player:\n\n- Their Tailscale invitation.\n- The server Tailscale IP from `tailscale ip -4`.\n- Their own NP ID and password.\n- A link to the [shadPS4 client setup guide](https://github.com/Wozzardman/shadp2p).\n- A reminder to add this fork's executable as a custom/local build in\n  QtLauncher or BBLauncher and select it before launching Bloodborne.\n\nDo not send `0.0.0.0` as the server address. Do not send the registration key\nafter the accounts are created.\n\nEvery player's shadPS4 network settings must use the same values, substituting\nthe real server Tailscale IP:\n\n| Setting | Value |\n| --- | --- |\n| Server | `100.101.102.103:31313` |\n| WebAPI Server | `http://100.101.102.103:31315` |\n| Signaling Info | Blank |\n| UPnP | Disabled for Tailscale |\n\nEvery player also needs this `host_overrides.json` in their shadPS4 user-data\nfolder:\n\n```json\n{\n  "https://ss4.scej-network.jp:20443": "http://100.101.102.103:31315"\n}\n```\n\nThe private shadNet server now provides `/bb-eu/ss.info`. Every `api_*` value is the private\nshadNet base URL; Bloodborne appends paths such as `/basic_utils/login` and\n`/summon_messenger/create` itself. No `thehuntersdream.com` override is needed. See [the\nBloodborne bootstrap contract](documentation/bloodborne-bootstrap.md) for the demonstrated\nrequest/response formats and the incremental Online test sequence.\n\nThe client README lists the exact Linux, Windows, macOS, and portable paths.\n\n## 7. Play co-op\n\n1. Keep shadNet and Tailscale running.\n2. Have each player start the matching shadPS4 build and sign in with a unique\n   shadNet account.\n3. Set the same Bloodborne matchmaking password.\n4. Enter compatible, normally co-op-enabled areas.\n5. The world host rings the Beckoning Bell.\n6. The guest rings the Small Resonant Bell.\n\nTraditional mode preserves Bloodborne's normal boss, area, level, bell, death,\nand session rules.\n\nIn seamless mode, the host and guest may begin on different maps. Ring the\nhost's Beckoning Bell first, then the guest's Small Resonant Bell, and leave both\nactive while shadNet prepares the guest and the game completes its normal room\njoin. If the host travels before discovery, wait until the host finishes loading\nbefore the guest rings. Established-session lantern travel is not yet supported.\n\n## Troubleshooting\n\n### The log shows `127.0.0.1` listeners\n\nStop shadNet, change `Host=0.0.0.0` in the `shadnet.cfg` beside the executable,\nand restart it. Editing a similarly named file in the repository root will not\nchange a server running from `build/`.\n\n### Players cannot reach `/status`\n\n- Confirm Tailscale shows every PC in the same tailnet.\n- Test `tailscale ping` in both directions.\n- Check the server firewall and confirm shadNet is still running.\n- Recheck the `100.` server address and TCP port `31315`.\n\n### `Login failed` appears\n\n- Recheck the player's NP ID and password.\n- Never assign the same account to two active players.\n- Confirm `build/db/shadnet.db` is the database containing the accounts.\n- Rebuild/update both repositories if the log reports a protocol mismatch.\n\n### Login works but summoning does not\n\n- Confirm UDP `31314` is allowed on the server.\n- Confirm all player PCs can reach one another over Tailscale, not just the\n  shadNet machine.\n- Check that every client has valid `host_overrides.json` content and can reach\n  `/status`.\n- Use the same game version. Traditional mode also requires a normally eligible\n  Bloodborne area.\n- Confirm shadNet's startup line reports the intended seamless setting and that\n  every client was started in the same mode.\n\n## Project status and credits\n\nThis is experimental software. Back up the shadNet database and player saves.\nThe project is based on the upstream\n[shadNet server](https://github.com/shadps4-emu/shadNet) and is licensed under\nGPL-2.0-or-later.\n\n> [!NOTE]\n> This README was generated by ChatGPT and reviewed against the configuration\n> and networking code in this repository.\n
+<!--
+SPDX-FileCopyrightText: 2026 shadNet Project
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
+# Private Bloodborne co-op server
+
+This shadNet fork provides the account, matchmaking, signaling, and WebAPI
+services used by the matching [shadPS4 P2P fork](https://github.com/Wozzardman/shadp2p).
+This guide sets up a small private server for Bloodborne's traditional or
+experimental seamless co-op. The host rings the Beckoning Bell and a guest
+rings the Small Resonant Bell in both modes.
+
+The simplest supported layout is one server and all players connected to the
+same Tailscale tailnet. Tailscale encrypts traffic between the PCs and removes
+the need to expose shadNet directly to the public Internet.
+
+> [!IMPORTANT]
+> The game protocol on TCP `31313` is not encrypted by shadNet itself. Use it
+> only on a trusted LAN or private tailnet. Do not forward these ports on your
+> router for this setup.
+
+## What runs where
+
+| Component | Computer | Purpose |
+| --- | --- | --- |
+| shadNet | One always-on PC | Accounts, matchmaking, STUN, and WebAPI |
+| shadPS4 P2P build | Every player's PC | Runs Bloodborne and sends peer traffic |
+| Tailscale | Server and every player's PC | Private connectivity between all PCs |
+
+The shadNet machine may also be one of the playing PCs. Keep its server terminal
+open for the entire session.
+
+## Ports and addresses
+
+| Protocol | Port | Used for |
+| --- | --- | --- |
+| TCP | `31313` | shadNet login and game protocol |
+| UDP | `31314` | matchmaking and STUN address discovery |
+| TCP | `31315` | WebAPI and Bloodborne summon broker |
+| TCP | `31316` | Optional integrated Bloodborne community website |
+| TCP | `31320` | Optional stats page; not required for co-op |
+
+There are three addresses that are easy to confuse:
+
+- `0.0.0.0` is used only for shadNet's `Host` setting. It tells the server to
+  listen on all network interfaces.
+- The server's Tailscale address begins with `100.`. Every shadPS4 client uses
+  this address for **Server**, **WebAPI Server**, and `host_overrides.json`.
+- `127.0.0.1` means this computer only. Friends cannot connect to it.
+
+Never give players `0.0.0.0`, and do not use the server's public Internet IP.
+
+## 1. Create the tailnet
+
+Install Tailscale on the server from the
+[official download page](https://tailscale.com/download). On Linux, the official
+quick install is:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Follow the login link, then obtain the server address:
+
+```bash
+tailscale ip -4
+```
+
+Write down the returned `100.x.y.z` address. This guide uses
+`100.101.102.103` only as an example.
+
+### Invite the players
+
+1. Open the [Tailscale admin console](https://login.tailscale.com/admin/users).
+2. Select **Users**, then **Invite external users**.
+3. Enter each player's email address or choose **Copy invite link**.
+4. Assign the **Member** role.
+5. Have each player accept the invitation, install Tailscale, and sign in on
+   the PC that runs shadPS4.
+
+Invite every player into the same tailnet. Bloodborne traffic connects players
+directly, so sharing only the shadNet device is insufficient. Invitation links
+expire; create a new link if a player cannot accept an old one.
+
+Verify connected machines with:
+
+```bash
+tailscale status
+tailscale ping <PLAYER_NAME_OR_100.x_ADDRESS>
+```
+
+## 2. Download and build shadNet
+
+Use a release package when this fork publishes one. To build from source, clone
+with submodules:
+
+```bash
+git clone --recursive https://github.com/Wozzardman/shadnet-p2p.git
+cd shadnet-p2p
+```
+
+If the repository was cloned without `--recursive`, repair it with:
+
+```bash
+git submodule update --init --recursive
+```
+
+### Ubuntu or Debian-based Linux
+
+Install the build tools, Qt 6 HTTP server module, and SQLite driver:
+
+```bash
+sudo apt update
+sudo apt install git cmake ninja-build build-essential qt6-base-dev qt6-httpserver-dev libqt6sql6-sqlite
+```
+
+### Arch Linux and derivatives
+
+```bash
+sudo pacman -S --needed base-devel git cmake ninja qt6-base qt6-httpserver
+```
+
+### Build
+
+From the repository root:
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+The server executable, `worlds.cfg`, and `scoreboards.cfg` will be in `build/`.
+On Windows, install Visual Studio 2022 with C++ tools and a Qt 6 MSVC kit that
+contains Core, Network, SQL, Concurrent, and HTTP Server, then run the same
+CMake commands from a Developer PowerShell with `CMAKE_PREFIX_PATH` set to the
+Qt kit directory.
+
+## 3. Create and edit the server configuration
+
+Run the server once from the repository root:
+
+```bash
+./build/shadnet
+```
+
+It creates `build/shadnet.cfg` and `build/db/shadnet.db` because shadNet uses
+the executable's directory for its runtime files. Press `Ctrl+C` to stop it,
+then open `build/shadnet.cfg` in a text editor.
+
+New installations generate grouped sections. You can also copy
+`shadnet.example.cfg` to `shadnet.cfg` and edit it. Existing flat `[General]`
+files remain fully supported; when both forms exist, the grouped key wins.
+
+```ini
+[Server]
+Host=0.0.0.0
+UnsecuredPort=31313
+
+[Network]
+Matching2Enabled=true
+MatchingUdpPort=31314
+WebApiPort=31315
+
+[Bloodborne]
+SeamlessCoop=false
+BootstrapEnabled=true
+PublicBaseUrl=http://100.101.102.103:31315
+ReferenceProxyEnabled=false
+GhostLifetimeSeconds=600
+
+[BloodborneSummon]
+LocationMode=Vanilla
+
+[Website]
+Enabled=true
+Port=31316
+RegistrationEnabled=true
+ExternalAssetsEnabled=true
+ExternalAssetsPath=web
+ChatEnabled=true
+
+[Downloads]
+MaxFileSizeMiB=512
+
+[Accounts]
+RegistrationSecretKey=YOUR_OWN_LONG_PRIVATE_CODE
+
+[Stats]
+Enabled=false
+
+[Debug]
+ServerLogEnabled=true
+ServerLogDirectory=logs
+ServerLogKeepDays=30
+ServerLogFlushImmediately=true
+BloodborneSummonTrace=false
+```
+
+shadNet does **not** generate the registration key. It is a private signup code
+chosen by the server owner, not a player password. Replace
+`YOUR_OWN_LONG_PRIVATE_CODE` with any long phrase you invent, using no spaces.
+The account tool must be given that exact same value when registering a player.
+Leave the key set after setup to prevent uninvited account creation. Players do
+not need it when logging in. Leave `EmailValidated` set to `false` unless email
+validation has been configured separately.
+
+Leaving `RegistrationSecretKey` empty enables open registration. In that case,
+the final key argument is omitted from the registration command. Open
+registration is not recommended for an ongoing server.
+
+### Server logs
+
+By default, shadNet writes a second copy of Qt console messages to a UTF-8 log file for each
+server launch. The default relative directory is alongside `shadnet.exe`:
+
+```text
+logs/YYYY-MM-DD_HH-mm-ss/shadnet.log
+```
+
+`ServerLogDirectory` can instead be an absolute path. `ServerLogKeepDays=0` disables automatic
+cleanup; any positive value removes only older session directories bearing a shadNet session
+marker. `ServerLogFlushImmediately=true` flushes after every message. Set
+`ServerLogEnabled=false` to keep the original console-only behavior.
+
+## Choose a co-op mode
+
+The server and every shadPS4 client must use the same mode. Stop shadNet and all
+clients before changing it.
+
+### Traditional co-op
+
+Traditional mode keeps Bloodborne's normal area, boss, level, bell, death, and
+session restrictions. Set this in `build/shadnet.cfg`:
+
+```ini
+[Bloodborne]
+SeamlessCoop=false
+```
+
+Also make sure `SHADNET_BLOODBORNE_SEAMLESS_COOP` is not set in the terminal or
+service that starts shadNet. On Linux:
+
+```bash
+unset SHADNET_BLOODBORNE_SEAMLESS_COOP
+./build/shadnet
+```
+
+Setting the configuration to `false` does not override an environment variable
+that is still set to `1`.
+
+### Experimental seamless co-op
+
+Seamless mode lets the broker match bells from different maps and carries the
+host's placement to the guest so the client can move the guest before the normal
+room join. The persistent and recommended server setting is:
+
+```ini
+[Bloodborne]
+SeamlessCoop=true
+```
+
+Then restart shadNet normally:
+
+```bash
+./build/shadnet
+```
+
+For a temporary test without editing the file, start the server with:
+
+```bash
+SHADNET_BLOODBORNE_SEAMLESS_COOP=1 ./build/shadnet
+```
+
+The startup log must say `seamless co-op enabled` and `anywhere summons enabled`.
+Every player must also start QtLauncher or BBLauncher with
+`SHADPS4_BLOODBORNE_SEAMLESS_COOP=1`; the matching client README has commands
+for Linux, Windows, and macOS. The server trace variable is optional and is not
+needed for normal seamless play.
+
+### Easier traditional co-op discovery
+
+`LocationMode` changes only which summon advertisements are discoverable. It
+does not change spawn placement, teleport players, enable seamless co-op, or
+mix different Chalice channels. `ChannelId`, password, bell type and matching
+level remain enforced in every mode.
+
+The recommended traditional setting removes only the position/distance check:
+
+```ini
+[BloodborneSummon]
+LocationMode=SameRegion
+```
+
+`Vanilla` requires the same area, region and channel and keeps
+`DistanceThreshold`. `SameRegion` requires the same area, region and channel
+but ignores position/distance. Experimental `SameArea` requires the same area
+and channel but ignores region and distance:
+
+```ini
+[BloodborneSummon]
+LocationMode=SameArea
+```
+
+Old configurations default to `Vanilla`. Restart shadNet after changing the
+mode. The startup log prints the active location mode.
+
+For a temporary Root Chalice diagnostic, set
+`Debug/BloodborneSummonTrace=true` or start with
+`SHADNET_BLOODBORNE_SUMMON_TRACE=1`. The trace logs sanitized request/response
+metadata and every discovery filter; session identifiers, passwords and opaque
+game blobs are represented by lengths and SHA-256 hashes rather than their
+contents.
+
+Bell use and cross-map guest placement are working. Lantern travel after a
+co-op session is already established remains incomplete on the client side, so
+do not expect the group to travel together from an active session yet.
+
+## 4. Start and test the server
+
+Start it again:
+
+```bash
+./build/shadnet
+```
+
+A remotely reachable setup should report listeners using `0.0.0.0`, including:
+
+```text
+Unsecured TCP listener on: 0.0.0.0:31313
+STUN UDP listener on: 0.0.0.0:31314
+WebApiServer listening on: 0.0.0.0:31315
+```
+
+From another tailnet PC, open the following address after substituting the real
+server Tailscale IP:
+
+```text
+http://100.101.102.103:31315/status
+```
+
+The expected response is:
+
+```json
+{"ok":true,"service":"shadnet-webapi"}
+```
+
+If the server firewall blocks access, allow the `shadnet` application or allow
+TCP `31313`, UDP `31314`, and TCP `31315` on the Tailscale/private interface.
+Do not expose TCP `31320` unless you intentionally enable the optional stats
+page.
+
+## 5. Create one account per player
+
+Each player needs a unique NP ID and email address. NP IDs are 3 to 16 letters,
+numbers, hyphens, or underscores. Build the bundled account tool separately:
+
+```bash
+cd clientsample
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+With shadNet still running in its own terminal, register each account from the
+`clientsample` directory. Use `127.0.0.1` when running the tool on the server:
+
+```bash
+./build/shadnet-sample 127.0.0.1 31313 register HunterOne CHOOSE_A_PASSWORD hunter1@example.com YOUR_OWN_LONG_PRIVATE_CODE
+```
+
+Repeat with a different NP ID, password, and email for every player. Account
+names and emails are case-insensitively unique. Give each player only their own
+NP ID and password. `YOUR_OWN_LONG_PRIVATE_CODE` in the command must be replaced
+with the exact registration key selected in the previous step.
+
+The accounts live in `build/db/shadnet.db`. Back up that file while the server
+is stopped. If it is deleted or replaced, existing logins will stop working.
+
+## 6. Give players the client settings
+
+Send each player:
+
+- Their Tailscale invitation.
+- The server Tailscale IP from `tailscale ip -4`.
+- Their own NP ID and password.
+- A link to the [shadPS4 client setup guide](https://github.com/Wozzardman/shadp2p).
+- A reminder to add this fork's executable as a custom/local build in
+  QtLauncher or BBLauncher and select it before launching Bloodborne.
+
+Do not send `0.0.0.0` as the server address. Do not send the registration key
+after the accounts are created.
+
+Every player's shadPS4 network settings must use the same values, substituting
+the real server Tailscale IP:
+
+| Setting | Value |
+| --- | --- |
+| Server | `100.101.102.103:31313` |
+| WebAPI Server | `http://100.101.102.103:31315` |
+| Signaling Info | Blank |
+| UPnP | Disabled for Tailscale |
+
+Every player also needs this `host_overrides.json` in their shadPS4 user-data
+folder:
+
+```json
+{
+  "https://ss4.scej-network.jp:20443": "http://100.101.102.103:31315"
+}
+```
+
+The private shadNet server now provides `/bb-eu/ss.info`. Every `api_*` value is the private
+shadNet base URL; Bloodborne appends paths such as `/basic_utils/login` and
+`/summon_messenger/create` itself. No `thehuntersdream.com` override is needed. See [the
+Bloodborne bootstrap contract](documentation/bloodborne-bootstrap.md) for the demonstrated
+request/response formats and the incremental Online test sequence.
+
+The client README lists the exact Linux, Windows, macOS, and portable paths.
+
+## 7. Play co-op
+
+1. Keep shadNet and Tailscale running.
+2. Have each player start the matching shadPS4 build and sign in with a unique
+   shadNet account.
+3. Set the same Bloodborne matchmaking password.
+4. Enter compatible, normally co-op-enabled areas.
+5. The world host rings the Beckoning Bell.
+6. The guest rings the Small Resonant Bell.
+
+Traditional mode preserves Bloodborne's normal boss, area, level, bell, death,
+and session rules.
+
+In seamless mode, the host and guest may begin on different maps. Ring the
+host's Beckoning Bell first, then the guest's Small Resonant Bell, and leave both
+active while shadNet prepares the guest and the game completes its normal room
+join. If the host travels before discovery, wait until the host finishes loading
+before the guest rings. Established-session lantern travel is not yet supported.
+
+## Troubleshooting
+
+### The log shows `127.0.0.1` listeners
+
+Stop shadNet, change `Host=0.0.0.0` in the `shadnet.cfg` beside the executable,
+and restart it. Editing a similarly named file in the repository root will not
+change a server running from `build/`.
+
+### Players cannot reach `/status`
+
+- Confirm Tailscale shows every PC in the same tailnet.
+- Test `tailscale ping` in both directions.
+- Check the server firewall and confirm shadNet is still running.
+- Recheck the `100.` server address and TCP port `31315`.
+
+### `Login failed` appears
+
+- Recheck the player's NP ID and password.
+- Never assign the same account to two active players.
+- Confirm `build/db/shadnet.db` is the database containing the accounts.
+- Rebuild/update both repositories if the log reports a protocol mismatch.
+
+### Login works but summoning does not
+
+- Confirm UDP `31314` is allowed on the server.
+- Confirm all player PCs can reach one another over Tailscale, not just the
+  shadNet machine.
+- Check that every client has valid `host_overrides.json` content and can reach
+  `/status`.
+- Use the same game version. Traditional mode also requires a normally eligible
+  Bloodborne area.
+- Confirm shadNet's startup line reports the intended seamless setting and that
+  every client was started in the same mode.
+
+## Project status and credits
+
+This is experimental software. Back up the shadNet database and player saves.
+The project is based on the upstream
+[shadNet server](https://github.com/shadps4-emu/shadNet) and is licensed under
+GPL-2.0-or-later.
+
+> [!NOTE]
+> This README was generated by ChatGPT and reviewed against the configuration
+> and networking code in this repository.
