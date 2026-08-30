@@ -42,3 +42,8 @@ signaling activation and before its call to `sceNpMatching2JoinRoom`. It should
 reuse already verified Bloodborne 1.09 trace sites, not force the call or guess
 new offsets. The cumulative readback build is intentionally left unchanged by
 this server-only work.
+
+When reporting a retry, include the complete shadNet session log from both the
+vanilla control and Root attempt so their sanitized body hashes and filter
+outcomes can be compared in sequence.
+
