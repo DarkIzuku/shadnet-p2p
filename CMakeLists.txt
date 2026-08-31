@@ -81,6 +81,8 @@ set(SOURCES
     web/website.qrc
     src/webapi_auth.h
     src/webapi_auth.cpp
+    src/webapi_routes_activity.h
+    src/webapi_routes_activity.cpp
     src/webapi_routes_users.h
     src/webapi_routes_users.cpp
     src/webapi_routes_profile.h
@@ -138,6 +140,21 @@ if(BUILD_TESTING)
     target_include_directories(test_config PRIVATE src)
     target_link_libraries(test_config PRIVATE Qt6::Core)
     add_test(NAME config COMMAND test_config)
+
+    add_executable(test_webapi_activity_feed EXCLUDE_FROM_ALL
+        tests/test_webapi_activity_feed.cpp
+        src/webapi_routes_activity.cpp
+        src/webapi_auth.cpp
+        src/database.cpp
+    )
+    target_include_directories(test_webapi_activity_feed PRIVATE src)
+    target_link_libraries(test_webapi_activity_feed PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Sql
+        Qt6::HttpServer
+    )
+    add_test(NAME webapi_activity_feed COMMAND test_webapi_activity_feed)
 
     add_executable(test_bloodborne_summon_broker EXCLUDE_FROM_ALL
         tests/test_bloodborne_summon_broker.cpp

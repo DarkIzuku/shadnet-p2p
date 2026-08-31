@@ -17,6 +17,7 @@
 #include "bloodborne_reference_proxy.h"
 #include "bloodborne_ssinfo_reference.h"
 #include "webapi_auth.h"
+#include "webapi_routes_activity.h"
 #include "webapi_routes_bloodborne.h"
 #include "webapi_routes_bloodborne_bootstrap.h"
 #include "webapi_routes_presence.h"
@@ -193,6 +194,8 @@ void WebApiServer::RegisterRoutes() {
     WebApiRoutes::RegisterProfileRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterPresenceRoutes(*m_http, *m_db, *m_shared);
     WebApiRoutes::RegisterSessionRoutes(*m_http, *m_db, *m_shared);
+    WebApiRoutes::RegisterActivityFeedRoutes(*m_http, *m_db,
+                                             m_config->IsBloodborneFeedTraceEnabled());
     if (m_config->IsBloodborneBootstrapEnabled()) {
         Bloodborne::WelcomeNotice welcomeNotice;
         welcomeNotice.enabled = m_config->IsBloodborneWelcomeNoticeEnabled();

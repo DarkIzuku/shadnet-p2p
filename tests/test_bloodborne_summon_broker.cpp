@@ -305,6 +305,103 @@ int main() {
   passwordSearch.replace("\"SummonWord\":null", "\"SummonWord\":\"hunter\"");
   CHECK(sameRegion.Search(Parse(passwordSearch), 8'406).isEmpty());
 
+  // Makeshift Altar / Quick Search is the captured asymmetric Method=1 flow:
+  // the requester is still in Hunter's Dream with ChannelId=0, while the
+  // advertised target already owns the real Chalice channel.
+  const QByteArray makeshiftSearch =
+      R"({"MessageId":"SummonDataGetListRequest","SessionId":"makeshift-session","UserId":8100,"AreaId":352321536,"AreaRegionId":210000,"ChannelId":0,"MatchingLevel":46,"SummonDataVersion":3,"SummonMethod":1,"SummonTypeList":[{"SummonType":0}],"SummonWord":null,"DistanceThreshold":null,"GetMaxCount":20,"PosX":0,"PosY":0,"PosZ":0})";
+  const QByteArray chaliceAdvertisement =
+      R"({"MessageId":"SummonDataCreateRequest","SessionId":"chalice-host","UserId":8001,"CharaId":18446744073709551614,"AreaId":486539264,"AreaRegionId":null,"ChannelId":10,"MatchingLevel":46,"SummonData":"chalice-data","SummonDataVersion":3,"SummonMethod":1,"SummonType":0,"SummonWord":null,"PosX":9000,"PosY":8000,"PosZ":7000})";
+  Bloodborne::SummonBroker makeshiftBroker(1'000);
+  CHECK(makeshiftBroker
+            .Advertise(Parse(chaliceAdvertisement), chaliceAdvertisement, 8'500)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  const QList<QByteArray> makeshiftFound =
+      makeshiftBroker.Search(Parse(makeshiftSearch), 8'501);
+  CHECK(makeshiftFound.size() == 1);
+  CHECK(makeshiftFound.front() == chaliceAdvertisement);
+  CHECK(Parse(makeshiftFound.front())
+            .value(QStringLiteral("ChannelId"))
+            .toInt() == 10);
+
+  QByteArray rootMakeshiftAdvertisement = chaliceAdvertisement;
+  rootMakeshiftAdvertisement.replace("\"SessionId\":\"chalice-host\"",
+                                     "\"SessionId\":\"root-makeshift-host\"");
+  rootMakeshiftAdvertisement.replace("\"UserId\":8001", "\"UserId\":8002");
+  rootMakeshiftAdvertisement.replace("\"ChannelId\":10", "\"ChannelId\":123");
+  Bloodborne::SummonBroker rootMakeshiftBroker(1'000);
+  CHECK(rootMakeshiftBroker
+            .Advertise(Parse(rootMakeshiftAdvertisement),
+                       rootMakeshiftAdvertisement, 8'510)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  const QList<QByteArray> rootMakeshiftFound =
+      rootMakeshiftBroker.Search(Parse(makeshiftSearch), 8'511);
+  CHECK(rootMakeshiftFound.size() == 1);
+  CHECK(Parse(rootMakeshiftFound.front())
+            .value(QStringLiteral("ChannelId"))
+            .toInt() == 123);
+
+  // Method=0 keeps the classic Area/Channel restrictions.
+  QByteArray normalChaliceAdvertisement = chaliceAdvertisement;
+  normalChaliceAdvertisement.replace("\"SummonMethod\":1",
+                                     "\"SummonMethod\":0");
+  QByteArray normalDreamSearch = makeshiftSearch;
+  normalDreamSearch.replace("\"SummonMethod\":1", "\"SummonMethod\":0");
+  Bloodborne::SummonBroker normalIsolationBroker(1'000);
+  CHECK(normalIsolationBroker
+            .Advertise(Parse(normalChaliceAdvertisement),
+                       normalChaliceAdvertisement, 8'520)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  CHECK(
+      normalIsolationBroker.Search(Parse(normalDreamSearch), 8'521).isEmpty());
+
+  // Password and type remain active Makeshift safety filters.
+  QByteArray protectedAdvertisement = chaliceAdvertisement;
+  protectedAdvertisement.replace("\"SummonWord\":null",
+                                 "\"SummonWord\":\"private\"");
+  Bloodborne::SummonBroker protectedMakeshiftBroker(1'000);
+  CHECK(protectedMakeshiftBroker
+            .Advertise(Parse(protectedAdvertisement), protectedAdvertisement,
+                       8'530)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  CHECK(
+      protectedMakeshiftBroker.Search(Parse(makeshiftSearch), 8'531).isEmpty());
+  QByteArray wrongMakeshiftType = makeshiftSearch;
+  wrongMakeshiftType.replace("\"SummonType\":0", "\"SummonType\":1");
+  CHECK(makeshiftBroker.Search(Parse(wrongMakeshiftType), 8'532).isEmpty());
+
+  // Claimed candidates are not returned by the classic Makeshift broker.
+  const QByteArray makeshiftClaim =
+      R"({"MessageId":"SummonDataSummonRequest","SessionId":"chalice-host","UserId":8100,"TargetUserId":8001,"TargetCharaId":18446744073709551614})";
+  CHECK(makeshiftBroker.Claim(Parse(makeshiftClaim), makeshiftClaim, 8'540)
+            .status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(makeshiftBroker.Search(Parse(makeshiftSearch), 8'541).isEmpty());
+
+  // Multiple Root targets retain their own channels in the returned bytes;
+  // ChannelId=0 belongs only to the searching side.
+  QByteArray secondRootAdvertisement = rootMakeshiftAdvertisement;
+  secondRootAdvertisement.replace("\"SessionId\":\"root-makeshift-host\"",
+                                  "\"SessionId\":\"root-makeshift-host-2\"");
+  secondRootAdvertisement.replace("\"UserId\":8002", "\"UserId\":8003");
+  secondRootAdvertisement.replace("\"ChannelId\":123", "\"ChannelId\":124");
+  CHECK(rootMakeshiftBroker
+            .Advertise(Parse(secondRootAdvertisement), secondRootAdvertisement,
+                       8'512)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  const QList<QByteArray> distinctRootResults =
+      rootMakeshiftBroker.Search(Parse(makeshiftSearch), 8'513);
+  CHECK(distinctRootResults.size() == 2);
+  bool foundChannel123 = false;
+  bool foundChannel124 = false;
+  for (const QByteArray &result : distinctRootResults) {
+    const int channel =
+        Parse(result).value(QStringLiteral("ChannelId")).toInt();
+    foundChannel123 = foundChannel123 || channel == 123;
+    foundChannel124 = foundChannel124 || channel == 124;
+  }
+  CHECK(foundChannel123);
+  CHECK(foundChannel124);
+
   bool validMode = false;
   CHECK(Bloodborne::ParseSummonLocationMode(QStringLiteral("sameRegion"),
                                             &validMode) ==

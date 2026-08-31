@@ -18,6 +18,7 @@ namespace Bloodborne {
 namespace {
 
 constexpr qsizetype MaxHostPlacementSize = 128;
+constexpr qint64 HuntersDreamAreaId = 352321536;
 
 qint64 Integer(const QJsonObject& object, const QString& key, qint64 fallback = 0) {
     const QJsonValue value = object.value(key);
@@ -58,6 +59,25 @@ bool IsSeamlessActiveState(SummonBroker::State state) {
            state == SummonBroker::State::Delivered;
 }
 
+bool IsMakeshiftQuickSearch(const QJsonObject& request, const QJsonObject& sign) {
+    const std::optional<qint64> requestMethod =
+        OptionalInteger(request, QStringLiteral("SummonMethod"));
+    const std::optional<qint64> signMethod = OptionalInteger(sign, QStringLiteral("SummonMethod"));
+    const std::optional<qint64> requestArea = OptionalInteger(request, QStringLiteral("AreaId"));
+    const std::optional<qint64> signArea = OptionalInteger(sign, QStringLiteral("AreaId"));
+    const std::optional<qint64> requestChannel =
+        OptionalInteger(request, QStringLiteral("ChannelId"));
+    const std::optional<qint64> signChannel = OptionalInteger(sign, QStringLiteral("ChannelId"));
+
+    // Captured Makeshift Altar searches originate in Hunter's Dream before the
+    // searching player knows the destination Chalice channel. Requiring the
+    // complete asymmetric shape keeps SummonMethod=1 from becoming a global
+    // location/channel wildcard for any other use of that value.
+    return requestMethod == 1 && signMethod == 1 && requestArea == HuntersDreamAreaId &&
+           signArea.has_value() && *signArea != HuntersDreamAreaId && requestChannel == 0 &&
+           signChannel.has_value() && *signChannel > 0;
+}
+
 bool ForceConsumeRequested(const QJsonObject& request) {
     return request.value(QStringLiteral("Force")).toBool(false) ||
            request.value(QStringLiteral("SeamlessLeave")).toBool(false);
@@ -93,6 +113,7 @@ struct SearchMatchChecks {
     bool password = true;
     bool level = true;
     bool distance = true;
+    bool makeshiftQuickSearch = false;
 
     bool Matches() const {
         return differentUser && differentSession && version && method && area && region &&
@@ -111,7 +132,8 @@ SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObj
         sign.value(QStringLiteral("SessionId")).toString() != requesterSession;
     checks.version = SameIfPresent(request, sign, QStringLiteral("SummonDataVersion"));
     checks.method = SameIfPresent(request, sign, QStringLiteral("SummonMethod"));
-    if (!anywhereSummons) {
+    checks.makeshiftQuickSearch = IsMakeshiftQuickSearch(request, sign);
+    if (!anywhereSummons && !checks.makeshiftQuickSearch) {
         checks.area = SameRequired(request, sign, QStringLiteral("AreaId"));
         checks.region = locationMode == SummonBroker::LocationMode::SameArea ||
                         SameRequired(request, sign, QStringLiteral("AreaRegionId"));
@@ -134,7 +156,8 @@ SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObj
 
     const QString requestWord = request.value(QStringLiteral("SummonWord")).toString();
     const QString signWord = sign.value(QStringLiteral("SummonWord")).toString();
-    if (!requestWord.isEmpty() && requestWord != signWord) {
+    if ((checks.makeshiftQuickSearch && requestWord != signWord) ||
+        (!checks.makeshiftQuickSearch && !requestWord.isEmpty() && requestWord != signWord)) {
         checks.password = false;
     }
 
@@ -148,7 +171,8 @@ SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObj
     }
 
     const qint64 distance = Integer(request, QStringLiteral("DistanceThreshold"), -1);
-    if (!anywhereSummons && locationMode == SummonBroker::LocationMode::Vanilla && distance >= 0 &&
+    if (!anywhereSummons && !checks.makeshiftQuickSearch &&
+        locationMode == SummonBroker::LocationMode::Vanilla && distance >= 0 &&
         request.contains(QStringLiteral("PosX")) && request.contains(QStringLiteral("PosY")) &&
         request.contains(QStringLiteral("PosZ"))) {
         const qint64 deltaX =
@@ -173,6 +197,7 @@ QJsonObject SearchTrace(const QJsonObject& request, const QJsonObject& sign,
     trace.insert(QStringLiteral("state"), static_cast<int>(state));
     trace.insert(QStringLiteral("location_mode"), SummonLocationModeName(locationMode));
     trace.insert(QStringLiteral("seamless_anywhere"), anywhereSummons);
+    trace.insert(QStringLiteral("makeshift_quick_search"), checks.makeshiftQuickSearch);
     trace.insert(QStringLiteral("request_area"), Integer(request, QStringLiteral("AreaId"), -1));
     trace.insert(QStringLiteral("candidate_area"), Integer(sign, QStringLiteral("AreaId"), -1));
     trace.insert(QStringLiteral("request_region"),

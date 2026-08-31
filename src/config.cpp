@@ -70,6 +70,8 @@ void ConfigManager::Parse(const QString& path) {
     }
     m_bloodborneSummonTraceEnabled =
         boolean("Debug/BloodborneSummonTrace", "BloodborneSummonTrace", false);
+    m_bloodborneFeedTraceEnabled =
+        boolean("Debug/BloodborneFeedTrace", "BloodborneFeedTrace", false);
     m_bloodborneBootstrapEnabled =
         boolean("Bloodborne/BootstrapEnabled", "BloodborneBootstrapEnabled", false);
     m_bloodbornePublicBaseUrl =

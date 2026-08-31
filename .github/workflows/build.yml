@@ -138,12 +138,15 @@ jobs:
           "src/bloodborne_summon_broker.h",
           "src/config.cpp",
           "src/config.h",
+          "src/webapi_routes_activity.cpp",
+          "src/webapi_routes_activity.h",
           "src/webapi_routes_bloodborne.cpp",
           "src/webapi_routes_bloodborne.h",
           "src/webapi_server.cpp",
           "tests/test_bloodborne_bootstrap.cpp",
           "tests/test_bloodborne_summon_broker.cpp",
-          "tests/test_config.cpp"
+          "tests/test_config.cpp",
+          "tests/test_webapi_activity_feed.cpp"
         )
         clang-format --dry-run --Werror $files
 
@@ -180,7 +183,7 @@ jobs:
 
     - name: Build and run tests
       run: |
-        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_config test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_config test_webapi_activity_feed test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
         ctest --test-dir ${{ github.workspace }}/build -C ${{ env.BUILD_TYPE }} --output-on-failure
 
     - name: Stage release
