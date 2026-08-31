@@ -62,6 +62,10 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneSummonTraceEnabled;
     }
+    bool IsBloodborneFeedTraceEnabled() const {
+        QReadLocker lk(&m_lock);
+        return m_bloodborneFeedTraceEnabled;
+    }
     bool IsBloodborneBootstrapEnabled() const {
         QReadLocker lk(&m_lock);
         return m_bloodborneBootstrapEnabled;
@@ -215,6 +219,7 @@ private:
     bool m_bloodborneSeamlessCoop = false;
     QString m_bloodborneSummonLocationMode = "Vanilla";
     bool m_bloodborneSummonTraceEnabled = false;
+    bool m_bloodborneFeedTraceEnabled = false;
     bool m_bloodborneBootstrapEnabled = false;
     QString m_bloodbornePublicBaseUrl;
     bool m_bloodborneReferenceProxyEnabled = false;

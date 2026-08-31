@@ -37,6 +37,7 @@ int main() {
     settings.setValue(QStringLiteral("BloodborneSeamlessCoop"), true);
     settings.setValue(QStringLiteral("BloodborneSummonLocationMode"),
                       QStringLiteral("SameRegion"));
+    settings.setValue(QStringLiteral("BloodborneFeedTrace"), true);
     settings.setValue(QStringLiteral("BloodborneWebsitePort"),
                       QStringLiteral("32000"));
     settings.setValue(QStringLiteral("RegistrationSecretKey"),
@@ -50,6 +51,7 @@ int main() {
   CHECK(legacy.IsBloodborneSeamlessCoopEnabled());
   CHECK(legacy.GetBloodborneSummonLocationMode() ==
         QStringLiteral("SameRegion"));
+  CHECK(legacy.IsBloodborneFeedTraceEnabled());
   CHECK(legacy.GetBloodborneWebsitePort() == QStringLiteral("32000"));
   CHECK(legacy.IsRegistrationAllowed(QStringLiteral("legacy-key")));
   CHECK(!legacy.IsRegistrationAllowed(QStringLiteral("wrong")));
@@ -64,6 +66,7 @@ int main() {
     settings.setValue(QStringLiteral("BloodborneSummon/LocationMode"),
                       QStringLiteral("SameArea"));
     settings.setValue(QStringLiteral("Debug/BloodborneSummonTrace"), true);
+    settings.setValue(QStringLiteral("Debug/BloodborneFeedTrace"), true);
     settings.setValue(QStringLiteral("Accounts/AdminsList"),
                       QStringLiteral("Izuku,Test"));
     settings.sync();
@@ -75,6 +78,7 @@ int main() {
   CHECK(grouped.GetBloodborneSummonLocationMode() ==
         QStringLiteral("SameArea"));
   CHECK(grouped.IsBloodborneSummonTraceEnabled());
+  CHECK(grouped.IsBloodborneFeedTraceEnabled());
   CHECK(grouped.IsAdmin(QStringLiteral("Izuku")));
 
   const QString generatedPath =
@@ -89,6 +93,10 @@ int main() {
   CHECK(generatedSettings.value(QStringLiteral("BloodborneSummon/LocationMode"))
             .toString() == QStringLiteral("Vanilla"));
   CHECK(!generatedSettings.contains(QStringLiteral("BloodborneSeamlessCoop")));
+  CHECK(
+      generatedSettings.contains(QStringLiteral("Debug/BloodborneFeedTrace")));
+  CHECK(!generatedSettings.value(QStringLiteral("Debug/BloodborneFeedTrace"))
+             .toBool());
 
   std::cout << "Config compatibility test passed\n";
   return 0;
