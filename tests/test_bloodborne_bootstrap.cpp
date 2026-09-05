@@ -832,11 +832,11 @@ int main(int argc, char *argv[]) {
   const QJsonArray makeshiftCandidates =
       Object(summonGetResult).value(QStringLiteral("SummonDataList")).toArray();
   CHECK(makeshiftCandidates.size() == 1);
-  CHECK(makeshiftCandidates.front()
+  CHECK(makeshiftCandidates.at(0)
             .toObject()
             .value(QStringLiteral("UserId"))
             .toInt() == 1);
-  CHECK(makeshiftCandidates.front()
+  CHECK(makeshiftCandidates.at(0)
             .toObject()
             .value(QStringLiteral("ChannelId"))
             .toInt() == 10);
