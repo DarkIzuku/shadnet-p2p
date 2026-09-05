@@ -5,7 +5,7 @@
 (() => {
   const translations = {
     en: {
-      menu: "Menu", home: "Home", hunters: "Hunters", stats: "Stats", register: "Register",
+      menu: "Menu", skipToContent: "Skip to content", home: "Home", hunters: "Hunters", stats: "Stats", register: "Register",
       login: "Login", account: "Account", loading: "Loading", unavailable: "The dream is quiet",
       tryAgain: "Try again", unofficial: "Unofficial community project. Not affiliated with Sony or FromSoftware.",
       footerQuote: "“May the night guide every wandering hunter.”", eyebrow: "A gathering beyond the veil",
@@ -65,7 +65,7 @@
       latestDownloads: "Latest Downloads", viewAllDownloads: "View all downloads",
       name: "Name", version: "Version", category: "Category", allCategories: "All categories",
       description: "Description", file: "File", fileName: "File name", size: "Size",
-      sha256: "SHA-256", download: "Download", downloadCount: "Downloads", updated: "Updated",
+      sha256: "SHA-256", download: "Download", startingDownload: "Starting…", downloadCount: "Downloads", updated: "Updated",
       manageDownloads: "Manage Downloads", adminDownloadsTitle: "Manage Downloads",
       adminDownloadsLead: "Upload files and control what visitors can download.",
       active: "Active", inactive: "Inactive", uploadDownload: "Upload Download",
@@ -76,7 +76,7 @@
       confirmDelete: "Delete this download and its stored file?", adminOnly: "Administrator access required."
     },
     es: {
-      menu: "Menú", home: "Inicio", hunters: "Cazadores", stats: "Estadísticas", register: "Registro",
+      menu: "Menú", skipToContent: "Saltar al contenido", home: "Inicio", hunters: "Cazadores", stats: "Estadísticas", register: "Registro",
       login: "Entrar", account: "Cuenta", loading: "Cargando", unavailable: "El sueño guarda silencio",
       tryAgain: "Intentar de nuevo", unofficial: "Proyecto comunitario no oficial. Sin afiliación con Sony ni FromSoftware.",
       footerQuote: "“Que la noche guíe a cada cazador errante.”", eyebrow: "Un encuentro más allá del velo",
@@ -136,7 +136,7 @@
       latestDownloads: "Últimas descargas", viewAllDownloads: "Ver todas las descargas",
       name: "Nombre", version: "Versión", category: "Categoría", allCategories: "Todas las categorías",
       description: "Descripción", file: "Archivo", fileName: "Nombre de archivo", size: "Tamaño",
-      sha256: "SHA-256", download: "Descargar", downloadCount: "Descargas", updated: "Actualizado",
+      sha256: "SHA-256", download: "Descargar", startingDownload: "Iniciando…", downloadCount: "Descargas", updated: "Actualizado",
       manageDownloads: "Gestionar descargas", adminDownloadsTitle: "Gestionar descargas",
       adminDownloadsLead: "Sube archivos y controla cuáles pueden descargar los visitantes.",
       active: "Activo", inactive: "Inactivo", uploadDownload: "Subir descarga",
@@ -154,7 +154,8 @@
     websiteStatus: null,
     chatEnabled: false,
     chatPollTimer: null,
-    chatPollGeneration: 0
+    chatPollGeneration: 0,
+    revealObserver: null
   };
   const app = document.getElementById("app");
   const t = (key, values = {}) => {
@@ -325,7 +326,14 @@
     if (button) {
       const original = button.textContent;
       button.textContent = t("copied");
-      setTimeout(() => { if (button.isConnected) button.textContent = original; }, 1200);
+      button.classList.add("is-copied");
+      button.setAttribute("aria-live", "polite");
+      setTimeout(() => {
+        if (!button.isConnected) return;
+        button.textContent = original;
+        button.classList.remove("is-copied");
+        button.removeAttribute("aria-live");
+      }, 1200);
     }
   }
 
@@ -341,6 +349,8 @@
   }
 
   function setPage(markupClass = "page inner-page") {
+    state.revealObserver?.disconnect();
+    state.revealObserver = null;
     app.replaceChildren();
     const page = node("section", markupClass);
     app.append(page);
@@ -365,6 +375,18 @@
     const action = node("a", "button primary download-button", t("download"));
     action.href = download.downloadUrl;
     action.setAttribute("download", download.originalFilename || "");
+    action.addEventListener("click", () => {
+      const original = action.textContent;
+      action.textContent = t("startingDownload");
+      action.classList.add("is-downloading");
+      action.setAttribute("aria-busy", "true");
+      setTimeout(() => {
+        if (!action.isConnected) return;
+        action.textContent = original;
+        action.classList.remove("is-downloading");
+        action.removeAttribute("aria-busy");
+      }, 1800);
+    });
     heading.append(identity, action);
     card.append(heading);
     if (download.description) card.append(node("p", "download-description", download.description));
@@ -1170,18 +1192,49 @@
     updateChatNav();
   }
 
+  function activateMotion(root) {
+    const items = [...root.querySelectorAll([
+      ".hero > *", ".stats-strip", ".panel", ".player-card", ".chalice-filters",
+      ".chalice-summary", ".chalice-row:not(.chalice-head)", ".chalice-hero",
+      ".detail-section", ".dungeon-map-placeholder", ".download-card",
+      ".admin-download-row", ".form-panel", ".chat-panel", ".pagination"
+    ].join(","))];
+    items.forEach((item, index) => {
+      item.classList.add("motion-item");
+      item.style.setProperty("--motion-order", String(Math.min(index, 8)));
+    });
+
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || !("IntersectionObserver" in window)) {
+      items.forEach((item) => item.classList.add("is-visible"));
+      return;
+    }
+
+    state.revealObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: 0.08, rootMargin: "0px 0px -24px" });
+    items.forEach((item) => state.revealObserver.observe(item));
+  }
+
   async function renderRoute() {
     stopChatPolling();
     document.querySelector(".site-nav")?.classList.remove("open");
+    document.querySelector(".nav-toggle")?.setAttribute("aria-expanded", "false");
     try {
       const path = location.pathname;
       document.querySelectorAll(".site-nav a").forEach((link) => {
         const href = link.getAttribute("href");
-        link.toggleAttribute("aria-current", href === path ||
+        const current = href === path ||
           (href === "/players" && path.startsWith("/player/")) ||
           (href === "/chalice" && path.startsWith("/chalice/")) ||
           (href === "/downloads" && path === "/downloads") ||
-          (href === "/admin/downloads" && path === "/admin/downloads"));
+          (href === "/admin/downloads" && path === "/admin/downloads");
+        if (current) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
       });
       if (path === "/") await renderHome();
       else if (path === "/players") await renderPlayers();
@@ -1195,9 +1248,13 @@
       else if (path === "/account") await renderAccount();
       else if (path === "/communion") await renderCommunion();
       else showError(new Error("Not found"));
-      if (location.hash) document.querySelector(location.hash)?.scrollIntoView({ behavior: "smooth" });
+      if (location.hash) {
+        const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        document.querySelector(location.hash)?.scrollIntoView({ behavior: reduced ? "auto" : "smooth" });
+      }
     } catch (error) { showError(error); }
     applyLanguage();
+    activateMotion(app);
   }
 
   document.querySelectorAll("[data-language]").forEach((button) => button.addEventListener("click", () => {
@@ -1206,6 +1263,14 @@
   const toggle = document.querySelector(".nav-toggle");
   toggle?.addEventListener("click", () => {
     const nav = document.querySelector(".site-nav"); const open = nav.classList.toggle("open"); toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const nav = document.querySelector(".site-nav");
+    if (!nav?.classList.contains("open")) return;
+    nav.classList.remove("open");
+    toggle?.setAttribute("aria-expanded", "false");
+    toggle?.focus();
   });
   document.addEventListener("click", (event) => {
     const anchor = event.target.closest("a[href]");

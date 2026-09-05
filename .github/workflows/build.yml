@@ -146,6 +146,7 @@ jobs:
           "tests/test_bloodborne_bootstrap.cpp",
           "tests/test_bloodborne_summon_broker.cpp",
           "tests/test_config.cpp",
+          "tests/test_bloodborne_website.cpp",
           "tests/test_webapi_activity_feed.cpp"
         )
         clang-format --dry-run --Werror $files

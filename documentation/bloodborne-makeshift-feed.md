@@ -5,18 +5,19 @@
 The summon broker recognizes the captured Quick Search pair only when all of
 the following are true:
 
-- the search request and candidate both use `SummonMethod=1`;
-- the search request is in Hunter's Dream (`AreaId=352321536`) with
-  `ChannelId=0`;
-- the candidate is outside Hunter's Dream and has a positive, real
-  `ChannelId`.
+- the host's search request is inside a Chalice, uses `SummonMethod=0`, and
+  carries a positive, real `ChannelId`;
+- the candidate advertisement uses `SummonMethod=1` in Hunter's Dream
+  (`AreaId=352321536`, `AreaRegionId=210000`) with `ChannelId=0`.
 
 For that pair only, discovery does not compare `AreaId`, `AreaRegionId`,
 `ChannelId`, position, or distance. User/session isolation, data version,
-method, summon type, password, level, candidate state, lifetime, and result
-limit remain active. The candidate advertisement is returned unchanged, so
-the target Chalice channel is not replaced with zero and different Root
-Chalices remain distinct.
+summon type, password, level, candidate state, lifetime, and result limit
+remain active. The returned record keeps the candidate's identity and opaque
+summon payload, but its top-level location fields use the host request. This
+preserves the real destination Chalice `ChannelId`; the candidate's zero is
+never treated as a global wildcard and different Root host requests keep their
+own channel.
 
 This is deliberately a discovery fix. It does not synthesize a teleport,
 warp, room join, host placement, or dungeon load. A client test must confirm
