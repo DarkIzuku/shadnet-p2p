@@ -19,6 +19,7 @@ namespace {
 
 constexpr qsizetype MaxHostPlacementSize = 128;
 constexpr qint64 HuntersDreamAreaId = 352321536;
+constexpr qint64 HuntersDreamAreaRegionId = 210000;
 
 qint64 Integer(const QJsonObject& object, const QString& key, qint64 fallback = 0) {
     const QJsonValue value = object.value(key);
@@ -59,23 +60,30 @@ bool IsSeamlessActiveState(SummonBroker::State state) {
            state == SummonBroker::State::Delivered;
 }
 
-bool IsMakeshiftQuickSearch(const QJsonObject& request, const QJsonObject& sign) {
+bool IsMakeshiftQuickSearchPair(const QJsonObject& request, const QJsonObject& candidate) {
     const std::optional<qint64> requestMethod =
         OptionalInteger(request, QStringLiteral("SummonMethod"));
-    const std::optional<qint64> signMethod = OptionalInteger(sign, QStringLiteral("SummonMethod"));
+    const std::optional<qint64> candidateMethod =
+        OptionalInteger(candidate, QStringLiteral("SummonMethod"));
     const std::optional<qint64> requestArea = OptionalInteger(request, QStringLiteral("AreaId"));
-    const std::optional<qint64> signArea = OptionalInteger(sign, QStringLiteral("AreaId"));
+    const std::optional<qint64> candidateArea =
+        OptionalInteger(candidate, QStringLiteral("AreaId"));
+    const std::optional<qint64> candidateRegion =
+        OptionalInteger(candidate, QStringLiteral("AreaRegionId"));
     const std::optional<qint64> requestChannel =
         OptionalInteger(request, QStringLiteral("ChannelId"));
-    const std::optional<qint64> signChannel = OptionalInteger(sign, QStringLiteral("ChannelId"));
+    const std::optional<qint64> candidateChannel =
+        OptionalInteger(candidate, QStringLiteral("ChannelId"));
 
-    // Captured Makeshift Altar searches originate in Hunter's Dream before the
-    // searching player knows the destination Chalice channel. Requiring the
-    // complete asymmetric shape keeps SummonMethod=1 from becoming a global
-    // location/channel wildcard for any other use of that value.
-    return requestMethod == 1 && signMethod == 1 && requestArea == HuntersDreamAreaId &&
-           signArea.has_value() && *signArea != HuntersDreamAreaId && requestChannel == 0 &&
-           signChannel.has_value() && *signChannel > 0;
+    // The captured flow is asymmetric. The Chalice host performs GetList with
+    // Method=0 and the real destination ChannelId, while the hunter waiting at
+    // the Makeshift Altar advertises Method=1 from Hunter's Dream with
+    // ChannelId=0. Requiring this complete shape keeps ChannelId=0 and Method=1
+    // from becoming global wildcards for ordinary summons.
+    return requestMethod == 0 && candidateMethod == 1 && requestArea.has_value() &&
+           *requestArea != HuntersDreamAreaId && requestChannel.has_value() &&
+           *requestChannel > 0 && candidateArea == HuntersDreamAreaId &&
+           candidateRegion == HuntersDreamAreaRegionId && candidateChannel == 0;
 }
 
 bool ForceConsumeRequested(const QJsonObject& request) {
@@ -131,8 +139,9 @@ SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObj
     checks.differentSession =
         sign.value(QStringLiteral("SessionId")).toString() != requesterSession;
     checks.version = SameIfPresent(request, sign, QStringLiteral("SummonDataVersion"));
-    checks.method = SameIfPresent(request, sign, QStringLiteral("SummonMethod"));
-    checks.makeshiftQuickSearch = IsMakeshiftQuickSearch(request, sign);
+    checks.makeshiftQuickSearch = IsMakeshiftQuickSearchPair(request, sign);
+    checks.method =
+        checks.makeshiftQuickSearch || SameIfPresent(request, sign, QStringLiteral("SummonMethod"));
     if (!anywhereSummons && !checks.makeshiftQuickSearch) {
         checks.area = SameRequired(request, sign, QStringLiteral("AreaId"));
         checks.region = locationMode == SummonBroker::LocationMode::SameArea ||
@@ -163,7 +172,8 @@ SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObj
 
     const qint64 requestLevel = Integer(request, QStringLiteral("MatchingLevel"), -1);
     const qint64 signLevel = Integer(sign, QStringLiteral("MatchingLevel"), -1);
-    if (!anywhereSummons && requestWord.isEmpty() && requestLevel >= 0 && signLevel >= 0) {
+    if (!anywhereSummons && (checks.makeshiftQuickSearch || requestWord.isEmpty()) &&
+        requestLevel >= 0 && signLevel >= 0) {
         const qint64 levelRange = 10 + requestLevel / 5;
         if (std::abs(requestLevel - signLevel) > levelRange) {
             checks.level = false;
@@ -359,9 +369,14 @@ QByteArray BuildRawMember(const QByteArray& key, const QJsonValue& value) {
     return out;
 }
 
-bool ShouldSpoofAdvertisementField(const QByteArray& key) {
-    return key == "AreaId" || key == "AreaRegionId" || key == "ChannelId" ||
-           key == "MatchingLevel" || key == "PosX" || key == "PosY" || key == "PosZ";
+bool IsAdvertisementLocationField(const QByteArray& key) {
+    return key == "AreaId" || key == "AreaRegionId" || key == "ChannelId";
+}
+
+bool ShouldSpoofAdvertisementField(const QByteArray& key, bool locationOnly) {
+    return IsAdvertisementLocationField(key) ||
+           (!locationOnly &&
+            (key == "MatchingLevel" || key == "PosX" || key == "PosY" || key == "PosZ"));
 }
 
 std::optional<QString> SummonDataWithAvailableResult(const QJsonObject& advertisement) {
@@ -386,7 +401,8 @@ std::optional<QString> SummonDataWithAvailableResult(const QJsonObject& advertis
 
 QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
                                          const QJsonObject& advertisement,
-                                         const QJsonObject& request, bool spoofLocation) {
+                                         const QJsonObject& request, bool spoofLocation,
+                                         bool locationOnly = false) {
     const QList<TopLevelMember> members = TopLevelMembers(rawAdvertisement);
     if (members.isEmpty()) {
         return rawAdvertisement;
@@ -414,7 +430,7 @@ QByteArray PrepareAdvertisementForSearch(const QByteArray& rawAdvertisement,
         const QJsonValue replacement = request.value(key);
         if (member.key == "SummonData" && summonData.has_value()) {
             appendMember(BuildRawMember(member.key, *summonData));
-        } else if (spoofLocation && ShouldSpoofAdvertisementField(member.key) &&
+        } else if (spoofLocation && ShouldSpoofAdvertisementField(member.key, locationOnly) &&
                    !replacement.isUndefined() && !replacement.isNull()) {
             appendMember(BuildRawMember(member.key, replacement));
         } else {
@@ -528,15 +544,23 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
                 it->updatedAtMs = nowMs;
                 continue;
             }
-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
-                                                       it->rawAdvertisement, it->advertisement,
-                                                       request, anywhereSummons)});
+            // A Makeshift advertisement does not know its destination yet. Keep
+            // the candidate identity and payload, but return the host's real
+            // Chalice location/channel so the client never treats ChannelId=0 as
+            // the destination.
+            const bool useRequestLocation = anywhereSummons || checks.makeshiftQuickSearch;
+            candidates.push_back(
+                {it->updatedAtMs,
+                 PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
+                                               useRequestLocation, checks.makeshiftQuickSearch)});
         } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
                    Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
                    checks.Matches()) {
-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
-                                                       it->rawAdvertisement, it->advertisement,
-                                                       request, anywhereSummons)});
+            const bool useRequestLocation = anywhereSummons || checks.makeshiftQuickSearch;
+            candidates.push_back(
+                {it->updatedAtMs,
+                 PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
+                                               useRequestLocation, checks.makeshiftQuickSearch)});
         }
     }
     std::sort(candidates.begin(), candidates.end(),

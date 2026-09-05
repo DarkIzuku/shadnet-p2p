@@ -792,11 +792,13 @@ int main(int argc, char *argv[]) {
 
   QJsonObject summonCreate =
       SessionRequest(QStringLiteral("SummonDataCreateRequest"), 1, sessionId);
-  summonCreate.insert(QStringLiteral("AreaId"), 1);
-  summonCreate.insert(QStringLiteral("AreaRegionId"), 2);
+  summonCreate.insert(QStringLiteral("AreaId"), 352321536);
+  summonCreate.insert(QStringLiteral("AreaRegionId"), 210000);
+  summonCreate.insert(QStringLiteral("ChannelId"), 0);
   summonCreate.insert(QStringLiteral("SummonData"),
                       QStringLiteral("local-data"));
   summonCreate.insert(QStringLiteral("SummonDataVersion"), 3);
+  summonCreate.insert(QStringLiteral("SummonMethod"), 1);
   summonCreate.insert(QStringLiteral("SummonType"), 0);
   summonCreate.insert(QStringLiteral("MatchingLevel"), 40);
   CHECK(IsSuccessful(
@@ -806,9 +808,20 @@ int main(int argc, char *argv[]) {
   QJsonObject summonGet =
       SessionRequest(QStringLiteral("SummonDataGetListRequest"), 2,
                      QStringLiteral("searcher-session"));
-  summonGet.insert(QStringLiteral("AreaId"), 1);
-  summonGet.insert(QStringLiteral("AreaRegionId"), 2);
+  summonGet.insert(QStringLiteral("AreaId"), 486539264);
+  summonGet.insert(QStringLiteral("AreaRegionId"), 290000);
+  summonGet.insert(QStringLiteral("ChannelId"), 10);
   summonGet.insert(QStringLiteral("MatchingLevel"), 40);
+  summonGet.insert(QStringLiteral("SummonDataVersion"), 3);
+  summonGet.insert(QStringLiteral("SummonMethod"), 0);
+  summonGet.insert(QStringLiteral("SummonTypeList"),
+                   QJsonArray{QJsonObject{{QStringLiteral("SummonType"), 0}}});
+  summonGet.insert(QStringLiteral("SummonWord"), QJsonValue::Null);
+  summonGet.insert(QStringLiteral("DistanceThreshold"), 100);
+  summonGet.insert(QStringLiteral("GetMaxCount"), 20);
+  summonGet.insert(QStringLiteral("PosX"), 9000);
+  summonGet.insert(QStringLiteral("PosY"), 8000);
+  summonGet.insert(QStringLiteral("PosZ"), 7000);
   const HttpResult summonGetResult =
       Post(tcp, QStringLiteral("/summon_messenger/get"), summonGet);
   CHECK(IsSuccessful(summonGetResult,
@@ -816,6 +829,17 @@ int main(int argc, char *argv[]) {
   CHECK(Object(summonGetResult)
             .value(QStringLiteral("SummonDataList"))
             .isArray());
+  const QJsonArray makeshiftCandidates =
+      Object(summonGetResult).value(QStringLiteral("SummonDataList")).toArray();
+  CHECK(makeshiftCandidates.size() == 1);
+  CHECK(makeshiftCandidates.front()
+            .toObject()
+            .value(QStringLiteral("UserId"))
+            .toInt() == 1);
+  CHECK(makeshiftCandidates.front()
+            .toObject()
+            .value(QStringLiteral("ChannelId"))
+            .toInt() == 10);
 
   QJsonObject summonRequest =
       SessionRequest(QStringLiteral("SummonDataSummonRequest"), 2,

@@ -358,6 +358,13 @@ int main(int argc, char *argv[]) {
   CHECK(home.body.contains("/communion"));
   CHECK(home.body.contains("/downloads"));
   CHECK(home.body.contains("/admin/downloads"));
+  CHECK(home.body.contains("skip-link"));
+  for (const QString &pagePath :
+       {QStringLiteral("/players"), QStringLiteral("/player/Izuku"),
+        QStringLiteral("/register"), QStringLiteral("/login"),
+        QStringLiteral("/account"), QStringLiteral("/communion")}) {
+    CHECK(Send(Url(server, pagePath), QByteArrayLiteral("GET")).status == 200);
+  }
   CHECK(HasHeader(home, QByteArrayLiteral("X-Content-Type-Options"),
                   QByteArrayLiteral("nosniff")));
   CHECK(HasHeader(home, QByteArrayLiteral("X-Frame-Options"),
@@ -386,6 +393,9 @@ int main(int argc, char *argv[]) {
   CHECK(script.body.contains("/api/admin/downloads"));
   CHECK(script.body.contains("state.account?.isAdmin"));
   CHECK(script.body.contains("password-eye"));
+  CHECK(script.body.contains("IntersectionObserver"));
+  CHECK(script.body.contains("startingDownload"));
+  CHECK(script.body.contains("aria-current"));
 
   const HttpResult style = Send(Url(server, QStringLiteral("/assets/site.css")),
                                 QByteArrayLiteral("GET"));
@@ -396,6 +406,10 @@ int main(int argc, char *argv[]) {
   CHECK(style.body.contains(".downloads-grid"));
   CHECK(style.body.contains(".admin-download-form"));
   CHECK(style.body.contains(".password-eye"));
+  CHECK(style.body.contains(".motion-item"));
+  CHECK(style.body.contains("prefers-reduced-motion"));
+  CHECK(style.body.contains(":focus-visible"));
+  CHECK(style.body.contains(".button.is-copied"));
   CHECK(Send(Url(server, QStringLiteral("/assets/favicon.png")),
              QByteArrayLiteral("GET"))
             .status == 200);
@@ -702,8 +716,8 @@ int main(int argc, char *argv[]) {
   CHECK(server.IsListening());
   CHECK(Send(Url(server, filePath), QByteArrayLiteral("GET")).body ==
         replacementBytes);
-  CHECK(QFileInfo::exists(temporary.filePath(
-      QStringLiteral("data/downloads/") + replacementStoredFilename)));
+  CHECK(QFileInfo::exists(temporary.filePath(QStringLiteral("data/downloads/") +
+                                             replacementStoredFilename)));
 
   const HttpResult deleted = Send(
       Url(server, QStringLiteral("/api/admin/downloads/%1").arg(downloadId)),

@@ -126,6 +126,13 @@ The interface language preference is stored only in browser `localStorage`. User
 player-created data are inserted with DOM `textContent` and are never translated or interpreted as
 HTML.
 
+The visual layer uses progressive enhancement only. Section and card entrances are driven by a
+small `IntersectionObserver`, while hover and feedback effects animate `transform` and `opacity`.
+Navigation, forms, Chalice glyph copy, downloads, profiles, and administration remain usable when
+that API is unavailable. The `prefers-reduced-motion: reduce` media query removes decorative motion,
+and the header includes keyboard focus states, an Escape-close mobile menu, and a skip-to-content
+link.
+
 Avatars are limited to 2 MB. PNG, JPEG, and WebP input is decoded, bounded, scaled to at most
 512×512, stripped of source metadata, and re-encoded as PNG. Server-generated UUID filenames are
 stored beneath `data/bloodborne-website/avatars/`; browser filenames and absolute paths are never
