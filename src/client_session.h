@@ -25,6 +25,10 @@
 #include "score_files.h"
 #include "stream_extractor.h"
 
+namespace Bloodborne {
+class SeamlessPartyService;
+}
+
 // Shared state visible to all sessions (thread-safe with locks)
 struct SharedState {
     ConfigManager* config;
@@ -61,6 +65,7 @@ struct SharedState {
 
     // Matchmaking shared state
     MatchingSharedState matching;
+    std::shared_ptr<Bloodborne::SeamlessPartyService> seamlessParties;
 
     // Live usage stats for the read-only stats HTTP server
     mutable QReadWriteLock usageLock;
@@ -231,6 +236,7 @@ public:
     ErrorType CmdSetRoomDataExternal(StreamExtractor& data, QByteArray& reply);
     ErrorType CmdKickoutRoomMember(StreamExtractor& data, QByteArray& reply);
     ErrorType CmdGetWorldInfoList(StreamExtractor& data, QByteArray& reply);
+    ErrorType CmdSeamlessControl(StreamExtractor& data, QByteArray& reply);
 
 signals:
     void Disconnected();

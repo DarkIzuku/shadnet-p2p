@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QHostAddress>
 #include <QtEndian>
+#include "bloodborne_seamless_party.h"
 #include "client_session.h"
 #include "proto_utils.h"
 #include "shadnet.pb.h"
@@ -830,6 +831,17 @@ ErrorType ClientSession::CmdLeaveRoom(StreamExtractor& data, QByteArray& reply) 
     }
 
     ResetMatchingRoomState(roomId);
+    if (m_shared->seamlessParties) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_shared->seamlessParties->MarkRoomLost(m_info.userId, roomId, nowMs);
+        if (const auto party = m_shared->seamlessParties->SnapshotForUser(m_info.userId, nowMs);
+            party.has_value()) {
+            qInfo().nospace().noquote()
+                << "[BLOODBORNE SEAMLESS MATCHING] party=" << party->partyId
+                << " member=" << m_info.npid << " room=" << roomId
+                << " state=" << static_cast<quint32>(party->state) << " result=room_lost_retained";
+        }
+    }
     qInfo() << "Room" << roomId << m_info.npid << "left mid=" << myMemberId;
 
     // Notify remaining members (MemberLeft, 0x1102)
@@ -1564,6 +1576,17 @@ void ClientSession::DoLeaveRoom(uint64_t roomId) {
     }
 
     ResetMatchingRoomState(roomId);
+    if (m_shared->seamlessParties) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_shared->seamlessParties->MarkRoomLost(m_info.userId, roomId, nowMs);
+        if (const auto party = m_shared->seamlessParties->SnapshotForUser(m_info.userId, nowMs);
+            party.has_value()) {
+            qInfo().nospace().noquote()
+                << "[BLOODBORNE SEAMLESS MATCHING] party=" << party->partyId
+                << " member=" << m_info.npid << " room=" << roomId
+                << " state=" << static_cast<quint32>(party->state) << " result=room_lost_retained";
+        }
+    }
 
     if (!roomDestroyed) {
         RoomMember left;

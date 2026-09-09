@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include "bloodborne_seamless_party.h"
 #include "client_session.h"
 #include "proto_utils.h"
 #include "protocol.h"
@@ -236,6 +237,8 @@ ErrorType ClientSession::DispatchCommand(CommandType cmd, StreamExtractor& se, Q
         return CmdKickoutRoomMember(se, reply);
     case CommandType::GetWorldInfoList:
         return CmdGetWorldInfoList(se, reply);
+    case CommandType::SeamlessControl:
+        return CmdSeamlessControl(se, reply);
     case CommandType::GetScoreAccountId:
         return CmdGetScoreAccountId(se, reply);
     case CommandType::GetScoreGameDataByAccId:
@@ -252,9 +255,12 @@ ErrorType ClientSession::CmdGetServerFeatures(QByteArray& reply) {
     shadnet::ServerFeaturesReply rep;
     rep.set_matching2_enabled(m_shared && m_shared->config &&
                               m_shared->config->IsMatching2Enabled());
+    rep.set_bloodborne_seamless_control_enabled(m_shared && m_shared->seamlessParties &&
+                                                m_shared->seamlessParties->IsEnabled());
     appendProto(reply, rep);
     qInfo() << "GetServerFeatures:" << m_info.npid
-            << "matching2_enabled=" << rep.matching2_enabled();
+            << "matching2_enabled=" << rep.matching2_enabled()
+            << "seamless_control_enabled=" << rep.bloodborne_seamless_control_enabled();
     return ErrorType::NoError;
 }
 
@@ -266,6 +272,17 @@ void ClientSession::CleanupOnDisconnect() {
 
     // Leave any matchmaking room before tearing down the client entry
     CleanupMatchingOnDisconnect();
+    if (m_shared->seamlessParties) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_shared->seamlessParties->MarkDisconnected(m_info.userId, nowMs);
+        if (const auto party = m_shared->seamlessParties->SnapshotForUser(m_info.userId, nowMs);
+            party.has_value()) {
+            qInfo().nospace().noquote()
+                << "[BLOODBORNE SEAMLESS RECOVERY] party=" << party->partyId
+                << " member=" << m_info.npid << " state=" << static_cast<quint32>(party->state)
+                << " result=control_disconnected_retained";
+        }
+    }
 
     // A user's joined-session state is linked to presence: going offline
     // auto-leaves all their sessions (owner-migration / owner-bind teardown)

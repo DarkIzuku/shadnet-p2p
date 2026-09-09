@@ -136,14 +136,24 @@ jobs:
         $files = @(
           "src/bloodborne_summon_broker.cpp",
           "src/bloodborne_summon_broker.h",
+          "src/bloodborne_seamless_party.cpp",
+          "src/bloodborne_seamless_party.h",
+          "src/client_session.cpp",
+          "src/client_session.h",
+          "src/cmd_account.cpp",
+          "src/cmd_matching.cpp",
+          "src/cmd_seamless.cpp",
           "src/config.cpp",
           "src/config.h",
+          "src/protocol.h",
+          "src/server.cpp",
           "src/webapi_routes_activity.cpp",
           "src/webapi_routes_activity.h",
           "src/webapi_routes_bloodborne.cpp",
           "src/webapi_routes_bloodborne.h",
           "src/webapi_server.cpp",
           "tests/test_bloodborne_bootstrap.cpp",
+          "tests/test_bloodborne_seamless_party.cpp",
           "tests/test_bloodborne_summon_broker.cpp",
           "tests/test_config.cpp",
           "tests/test_webapi_activity_feed.cpp"
@@ -183,7 +193,7 @@ jobs:
 
     - name: Build and run tests
       run: |
-        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_config test_webapi_activity_feed test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_config test_webapi_activity_feed test_bloodborne_summon_broker test_bloodborne_seamless_party test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $env:NUMBER_OF_PROCESSORS
         ctest --test-dir ${{ github.workspace }}/build -C ${{ env.BUILD_TYPE }} --output-on-failure
 
     - name: Stage release
@@ -205,7 +215,7 @@ jobs:
         path: staging/
 
   linux:
-    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/chalice-') && !startsWith(github.head_ref || github.ref_name, 'codex/root-chalice-') }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/chalice-') && !startsWith(github.head_ref || github.ref_name, 'codex/root-chalice-') && !startsWith(github.head_ref || github.ref_name, 'bloodborne-seamless-') }}
     runs-on: ubuntu-24.04
     needs: [get-info, get-qt-version]
     steps:
