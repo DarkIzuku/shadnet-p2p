@@ -314,8 +314,18 @@ game blobs are represented by lengths and SHA-256 hashes rather than their
 contents.
 
 Bell use and cross-map guest placement are working. Lantern travel after a
-co-op session is already established remains incomplete on the client side, so
-do not expect the group to travel together from an active session yet.
+co-op session is already established now uses the private, versioned
+`TravelBegin`/`Ready`/`Commit`/`Arrived` protocol, but still requires runtime
+validation with the matching client build.
+
+Seamless matching also keeps the captured Bloodborne roles separate:
+`SummonType=0` is a Small Resonant cooperator and `SummonType=2` is a Sinister
+invader. A PvP search/claim cannot consume a cooperative advertisement (or the
+reverse). Invaders are session-scoped rather than permanent party members, and
+their normal removal cleans only the PvP record so the host and cooperators can
+remain together. The game still owns red-phantom construction and faction
+semantics; cross-map Sinister runtime behavior must be verified in-game before
+it is considered confirmed.
 
 ## 4. Start and test the server
 

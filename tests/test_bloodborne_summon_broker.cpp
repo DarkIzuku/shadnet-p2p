@@ -477,6 +477,63 @@ int main() {
       "\"HostData\":\"remote-host-owned-data\""));
   CHECK(!remoteDeliveryResponse.contains("\"SeamlessWarp\""));
 
+  // Captured role contract: Small Resonant uses SummonType=0 and Sinister
+  // Resonant uses SummonType=2. Searches and subsequent claims must remain
+  // isolated even when seamless cross-map matching is enabled.
+  QByteArray pvpAdvertisement = remoteAdvertisement;
+  pvpAdvertisement.replace("\"SessionId\":\"remote-session\"",
+                           "\"SessionId\":\"pvp-session\"");
+  pvpAdvertisement.replace("\"UserId\":3000", "\"UserId\":4000");
+  pvpAdvertisement.replace("\"SummonType\":0", "\"SummonType\":2");
+  QByteArray pvpSearch = search;
+  pvpSearch.replace("\"SessionId\":\"host-session\"",
+                    "\"SessionId\":\"pvp-host-session\"");
+  pvpSearch.replace("\"UserId\":2466", "\"UserId\":5000");
+  pvpSearch.replace("\"SummonType\":0", "\"SummonType\":2");
+  QByteArray pvpClaim =
+      R"({"MessageId":"SummonDataSummonRequest","SessionId":"pvp-session","UserId":5000,"TargetUserId":4000,"TargetCharaId":9223372036854775808})";
+  QByteArray coopClaimByPvpRequester =
+      R"({"MessageId":"SummonDataSummonRequest","SessionId":"guest-session","UserId":5000,"TargetUserId":2465,"TargetCharaId":9223372036854775808})";
+
+  Bloodborne::SummonBroker roleBroker(seamlessOptions);
+  CHECK(
+      roleBroker.Advertise(Parse(advertisement), advertisement, 10'000).state ==
+      Bloodborne::SummonBroker::State::Advertised);
+  CHECK(roleBroker.Advertise(Parse(pvpAdvertisement), pvpAdvertisement, 10'001)
+            .state == Bloodborne::SummonBroker::State::Advertised);
+  CHECK(roleBroker.RoleForUser(2465, 10'002) ==
+        Bloodborne::SummonBroker::PeerRole::Cooperator);
+  CHECK(roleBroker.RoleForUser(4000, 10'002) ==
+        Bloodborne::SummonBroker::PeerRole::Invader);
+  const auto coopOnly = roleBroker.Search(Parse(search), 10'003);
+  CHECK(coopOnly.size() == 1);
+  CHECK(Parse(coopOnly.front()).value(QStringLiteral("SummonType")).toInt() ==
+        0);
+  const auto pvpOnly = roleBroker.Search(Parse(pvpSearch), 10'004);
+  CHECK(pvpOnly.size() == 1);
+  CHECK(Parse(pvpOnly.front()).value(QStringLiteral("SummonType")).toInt() ==
+        2);
+  CHECK(roleBroker
+            .Claim(Parse(coopClaimByPvpRequester), coopClaimByPvpRequester,
+                   10'005)
+            .status == Bloodborne::SummonBroker::ClaimStatus::RoleMismatch);
+  const auto pvpClaimed = roleBroker.Claim(Parse(pvpClaim), pvpClaim, 10'006);
+  CHECK(pvpClaimed.status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(pvpClaimed.peerRole == Bloodborne::SummonBroker::PeerRole::Invader);
+  CHECK(pvpClaimed.summonType == 2);
+  CHECK(Bloodborne::SummonModeName(Parse(pvpSearch)) == QStringLiteral("pvp"));
+  CHECK(Bloodborne::SummonModeName(Parse(search)) == QStringLiteral("coop"));
+  const QByteArray pvpRemoval =
+      R"({"MessageId":"SummonDataRemoveRequest","SessionId":"pvp-session","UserId":4000})";
+  const auto pvpConsumed = roleBroker.Consume(Parse(pvpRemoval), 10'007);
+  CHECK(pvpConsumed.consumed == 1);
+  CHECK(pvpConsumed.retained == 0);
+  CHECK(pvpConsumed.pvpConsumed == 1);
+  CHECK(roleBroker.StateFor(QStringLiteral("pvp-session"), 4000, 10'007) ==
+        Bloodborne::SummonBroker::State::Consumed);
+  CHECK(roleBroker.StateFor(QStringLiteral("guest-session"), 2465, 10'007) ==
+        Bloodborne::SummonBroker::State::Advertised);
+
   std::cout << "Bloodborne summon broker state test passed\n";
   return 0;
 }

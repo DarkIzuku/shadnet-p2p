@@ -20,7 +20,16 @@ Bloodborne::SeamlessRoomSnapshot MakeRoom() {
   room.roomId = 91;
   room.leaderUserId = 1;
   room.leaderNpid = QStringLiteral("Izuku");
-  room.members = {{1, QStringLiteral("Izuku")}, {2, QStringLiteral("Hiryu")}};
+  room.members = {
+      {1, QStringLiteral("Izuku"), Bloodborne::SeamlessPeerRole::Host},
+      {2, QStringLiteral("Hiryu"), Bloodborne::SeamlessPeerRole::Cooperator}};
+  return room;
+}
+
+Bloodborne::SeamlessRoomSnapshot MakeMixedRoom() {
+  auto room = MakeRoom();
+  room.members.append(
+      {3, QStringLiteral("Maria"), Bloodborne::SeamlessPeerRole::Invader});
   return room;
 }
 
@@ -130,6 +139,19 @@ int main() {
   service.MarkDisconnected(2, 190);
   CHECK(service.SnapshotForUser(1, 190).has_value());
   CHECK(service.Size(1'191) == 0);
+
+  Bloodborne::SeamlessPartyService mixedService(options);
+  const auto mixedBegin = mixedService.Handle(
+      1, QStringLiteral("Izuku"), MakeBegin(), MakeMixedRoom(), 2'000);
+  CHECK(mixedBegin.accepted);
+  CHECK(mixedBegin.deliveries.size() == 1);
+  CHECK(mixedBegin.deliveries[0].targetUserId == 2);
+  const auto mixedSnapshot = mixedService.SnapshotForUser(1, 2'001);
+  CHECK(mixedSnapshot.has_value());
+  CHECK(mixedSnapshot->members.size() == 2);
+  CHECK(!mixedService.SnapshotForUser(3, 2'001).has_value());
+  mixedService.MarkDisconnected(3, 2'002);
+  CHECK(mixedService.SnapshotForUser(1, 2'002).has_value());
 
   if (failures != 0)
     return EXIT_FAILURE;

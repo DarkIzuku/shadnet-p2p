@@ -151,10 +151,12 @@ SeamlessHandleResult SeamlessPartyService::Handle(qint64 senderUserId, const QSt
             if (member.userId <= 0 || member.npid.isEmpty() ||
                 uniqueMembers.contains(member.userId))
                 return RejectLocked(QStringLiteral("invalid_room_members"));
+            uniqueMembers.insert(member.userId);
+            if (member.role == SeamlessPeerRole::Invader)
+                continue;
             const auto existingParty = m_userToParty.constFind(member.userId);
             if (existingParty != m_userToParty.constEnd())
                 return RejectLocked(QStringLiteral("member_already_in_party"));
-            uniqueMembers.insert(member.userId);
             MemberState state;
             state.identity = member;
             state.lastSeenMs = nowMs;
@@ -162,10 +164,12 @@ SeamlessHandleResult SeamlessPartyService::Handle(qint64 senderUserId, const QSt
         }
         if (!party.members.contains(senderUserId))
             return RejectLocked(QStringLiteral("leader_not_in_room"));
+        if (party.members.size() < 2)
+            return RejectLocked(QStringLiteral("cooperative_member_required"));
         partyId = party.id;
         m_parties.insert(party.id, party);
-        for (const auto& member : room->members)
-            m_userToParty.insert(member.userId, party.id);
+        for (auto member = party.members.cbegin(); member != party.members.cend(); ++member)
+            m_userToParty.insert(member.key(), party.id);
     }
 
     if (!partyId.has_value())

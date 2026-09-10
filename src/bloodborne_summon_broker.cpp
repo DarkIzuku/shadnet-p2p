@@ -121,6 +121,17 @@ struct SearchMatchChecks {
     }
 };
 
+QSet<int> RequestedSummonTypes(const QJsonObject& request) {
+    QSet<int> summonTypes;
+    for (const QJsonValue& value : request.value(QStringLiteral("SummonTypeList")).toArray()) {
+        const QJsonObject filter = value.toObject();
+        if (filter.contains(QStringLiteral("SummonType"))) {
+            summonTypes.insert(static_cast<int>(Integer(filter, QStringLiteral("SummonType"))));
+        }
+    }
+    return summonTypes;
+}
+
 SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObject& sign,
                                       bool anywhereSummons,
                                       SummonBroker::LocationMode locationMode) {
@@ -142,13 +153,7 @@ SearchMatchChecks EvaluateSearchMatch(const QJsonObject& request, const QJsonObj
         checks.channel = SameRequired(request, sign, QStringLiteral("ChannelId"));
     }
 
-    QSet<int> summonTypes;
-    for (const QJsonValue& value : request.value(QStringLiteral("SummonTypeList")).toArray()) {
-        const QJsonObject filter = value.toObject();
-        if (filter.contains(QStringLiteral("SummonType"))) {
-            summonTypes.insert(static_cast<int>(Integer(filter, QStringLiteral("SummonType"))));
-        }
-    }
+    const QSet<int> summonTypes = RequestedSummonTypes(request);
     if (!summonTypes.isEmpty() &&
         !summonTypes.contains(static_cast<int>(Integer(sign, QStringLiteral("SummonType"))))) {
         checks.summonType = false;
@@ -507,6 +512,14 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
     };
     std::vector<Candidate> candidates;
     const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
+    const QSet<int> requestedSummonTypes = RequestedSummonTypes(request);
+    if (requester >= 0 && !requestedSummonTypes.isEmpty()) {
+        auto& intent = m_searchIntents[requester];
+        if (nowMs - intent.updatedAtMs > m_ttlMs)
+            intent.summonTypes.clear();
+        intent.summonTypes.unite(requestedSummonTypes);
+        intent.updatedAtMs = nowMs;
+    }
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
     const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
@@ -598,6 +611,21 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
     ClaimResult result;
     result.targetSessionId = target->advertisement.value(QStringLiteral("SessionId")).toString();
     result.targetUserId = Integer(target->advertisement, QStringLiteral("UserId"), -1);
+    result.summonType = Integer(target->advertisement, QStringLiteral("SummonType"), -1);
+    result.peerRole = PeerRoleForSummonType(result.summonType);
+    const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
+    const std::optional<qint64> explicitSummonType =
+        OptionalInteger(request, QStringLiteral("SummonType"));
+    const auto intent = m_searchIntents.constFind(requester);
+    const bool explicitMismatch =
+        explicitSummonType.has_value() && *explicitSummonType != result.summonType;
+    const bool searchMismatch = intent != m_searchIntents.constEnd() &&
+                                !intent->summonTypes.isEmpty() &&
+                                !intent->summonTypes.contains(static_cast<int>(result.summonType));
+    if (explicitMismatch || searchMismatch) {
+        result.status = ClaimStatus::RoleMismatch;
+        return result;
+    }
     if (target->state == State::Claimed || target->state == State::Delivered) {
         result.status =
             target->claim == request ? ClaimStatus::AlreadyClaimed : ClaimStatus::Conflict;
@@ -640,7 +668,14 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
             Integer(it->advertisement, QStringLiteral("UserId"), -1) == *userId;
         if (sessionMatches && userMatches && it->state != State::Consumed) {
             it->updatedAtMs = nowMs;
-            if (m_seamlessCoop && !forceConsume && IsSeamlessActiveState(it->state)) {
+            const PeerRole role =
+                PeerRoleForSummonType(Integer(it->advertisement, QStringLiteral("SummonType"), -1));
+            // Cooperative advertisements remain available to the persistent party. An
+            // invasion is intentionally session-scoped: Bloodborne's normal remove/end path
+            // must clean only that PvP record so a later invasion can start without turning
+            // the invader into a permanent cooperative member.
+            if (m_seamlessCoop && role != PeerRole::Invader && !forceConsume &&
+                IsSeamlessActiveState(it->state)) {
                 ++result.retained;
                 if (!it->hostPlacement.isEmpty()) {
                     result.pendingHostPlacement = it->hostPlacement;
@@ -649,6 +684,8 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
             }
             it->state = State::Consumed;
             ++result.consumed;
+            if (role == PeerRole::Invader)
+                ++result.pvpConsumed;
         }
     }
     return result;
@@ -663,6 +700,23 @@ std::optional<SummonBroker::State> SummonBroker::StateFor(const QString& session
         return std::nullopt;
     }
     return it->state;
+}
+
+SummonBroker::PeerRole SummonBroker::RoleForUser(qint64 userId, qint64 nowMs) {
+    QMutexLocker lock(&m_mutex);
+    PurgeExpiredLocked(nowMs);
+    const Record* newest = nullptr;
+    for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
+        if (Integer(it->advertisement, QStringLiteral("UserId"), -1) != userId ||
+            it->state == State::Consumed) {
+            continue;
+        }
+        if (newest == nullptr || it->updatedAtMs > newest->updatedAtMs)
+            newest = &it.value();
+    }
+    return newest != nullptr ? PeerRoleForSummonType(
+                                   Integer(newest->advertisement, QStringLiteral("SummonType"), -1))
+                             : PeerRole::Unknown;
 }
 
 int SummonBroker::Size(qint64 nowMs) {
@@ -693,6 +747,52 @@ void SummonBroker::PurgeExpiredLocked(qint64 nowMs) {
             ++it;
         }
     }
+    for (auto it = m_searchIntents.begin(); it != m_searchIntents.end();) {
+        if (nowMs - it->updatedAtMs > m_ttlMs) {
+            it = m_searchIntents.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+SummonBroker::PeerRole PeerRoleForSummonType(qint64 summonType) {
+    // Captured Bloodborne contracts: Small Resonant Bell advertises type 0 and
+    // Sinister Resonant Bell advertises type 2. Unknown values remain unknown;
+    // they are never guessed into a cooperative or hostile role.
+    if (summonType == 0)
+        return SummonBroker::PeerRole::Cooperator;
+    if (summonType == 2)
+        return SummonBroker::PeerRole::Invader;
+    return SummonBroker::PeerRole::Unknown;
+}
+
+QString SummonPeerRoleName(SummonBroker::PeerRole role) {
+    switch (role) {
+    case SummonBroker::PeerRole::Host:
+        return QStringLiteral("host");
+    case SummonBroker::PeerRole::Cooperator:
+        return QStringLiteral("cooperator");
+    case SummonBroker::PeerRole::Invader:
+        return QStringLiteral("invader");
+    case SummonBroker::PeerRole::Unknown:
+        return QStringLiteral("unknown");
+    }
+    return QStringLiteral("unknown");
+}
+
+QString SummonModeName(const QJsonObject& request) {
+    const QSet<int> types = RequestedSummonTypes(request);
+    if (types.size() == 1 && types.contains(0))
+        return QStringLiteral("coop");
+    if (types.size() == 1 && types.contains(2))
+        return QStringLiteral("pvp");
+    const qint64 directType = Integer(request, QStringLiteral("SummonType"), -1);
+    if (directType == 0)
+        return QStringLiteral("coop");
+    if (directType == 2)
+        return QStringLiteral("pvp");
+    return QStringLiteral("unknown");
 }
 
 SummonBroker::LocationMode ParseSummonLocationMode(const QString& value, bool* valid) {

@@ -27,7 +27,8 @@
 
 namespace Bloodborne {
 class SeamlessPartyService;
-}
+class SummonBroker;
+} // namespace Bloodborne
 
 // Shared state visible to all sessions (thread-safe with locks)
 struct SharedState {
@@ -66,6 +67,7 @@ struct SharedState {
     // Matchmaking shared state
     MatchingSharedState matching;
     std::shared_ptr<Bloodborne::SeamlessPartyService> seamlessParties;
+    std::shared_ptr<Bloodborne::SummonBroker> bloodborneSummonBroker;
 
     // Live usage stats for the read-only stats HTTP server
     mutable QReadWriteLock usageLock;

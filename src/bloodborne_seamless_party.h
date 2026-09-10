@@ -32,9 +32,17 @@ enum class SeamlessPartyState : quint32 {
     Disconnected = 8,
 };
 
+enum class SeamlessPeerRole : quint32 {
+    Unknown = 0,
+    Host = 1,
+    Cooperator = 2,
+    Invader = 3,
+};
+
 struct SeamlessPartyMember {
     qint64 userId = 0;
     QString npid;
+    SeamlessPeerRole role = SeamlessPeerRole::Unknown;
 };
 
 struct SeamlessRoomSnapshot {

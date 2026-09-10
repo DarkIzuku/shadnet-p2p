@@ -5,6 +5,7 @@
 #include <optional>
 #include <QDateTime>
 #include "bloodborne_seamless_party.h"
+#include "bloodborne_summon_broker.h"
 #include "client_session.h"
 #include "proto_utils.h"
 #include "shadnet.pb.h"
@@ -100,6 +101,7 @@ ErrorType ClientSession::CmdSeamlessControl(StreamExtractor& data, QByteArray& r
     if (!phase.has_value())
         return ErrorType::InvalidInput;
 
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     std::optional<Bloodborne::SeamlessRoomSnapshot> roomSnapshot;
     if (m_matching.roomId != 0) {
         QReadLocker roomLock(&m_shared->matching.roomsLock);
@@ -114,14 +116,32 @@ ErrorType ClientSession::CmdSeamlessControl(StreamExtractor& data, QByteArray& r
                 snapshot.leaderNpid = owner.value().npid;
                 for (auto member = room->members.cbegin(); member != room->members.cend();
                      ++member) {
-                    snapshot.members.append({member->userId, member->npid});
+                    Bloodborne::SeamlessPeerRole role = Bloodborne::SeamlessPeerRole::Unknown;
+                    if (member.key() == room->ownerMemberId) {
+                        role = Bloodborne::SeamlessPeerRole::Host;
+                    } else if (m_shared->bloodborneSummonBroker) {
+                        switch (
+                            m_shared->bloodborneSummonBroker->RoleForUser(member->userId, nowMs)) {
+                        case Bloodborne::SummonBroker::PeerRole::Cooperator:
+                            role = Bloodborne::SeamlessPeerRole::Cooperator;
+                            break;
+                        case Bloodborne::SummonBroker::PeerRole::Invader:
+                            role = Bloodborne::SeamlessPeerRole::Invader;
+                            break;
+                        case Bloodborne::SummonBroker::PeerRole::Host:
+                            role = Bloodborne::SeamlessPeerRole::Host;
+                            break;
+                        case Bloodborne::SummonBroker::PeerRole::Unknown:
+                            break;
+                        }
+                    }
+                    snapshot.members.append({member->userId, member->npid, role});
                 }
                 roomSnapshot = std::move(snapshot);
             }
         }
     }
 
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const auto event = FromProto(request.event(), *phase);
     auto result =
         m_shared->seamlessParties->Handle(m_info.userId, m_info.npid, event, roomSnapshot, nowMs);
