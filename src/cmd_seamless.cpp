@@ -106,12 +106,12 @@ ErrorType ClientSession::CmdSeamlessControl(StreamExtractor& data, QByteArray& r
         const auto room =
             m_shared->matching.rooms.constFind({m_matching.matchingKey, m_matching.roomId});
         if (room != m_shared->matching.rooms.constEnd()) {
-            const RoomMember* owner = room->findById(room->ownerMemberId);
-            if (owner) {
+            const auto owner = room->members.constFind(room->ownerMemberId);
+            if (owner != room->members.constEnd()) {
                 Bloodborne::SeamlessRoomSnapshot snapshot;
                 snapshot.roomId = room->roomId;
-                snapshot.leaderUserId = owner->userId;
-                snapshot.leaderNpid = owner->npid;
+                snapshot.leaderUserId = owner.value().userId;
+                snapshot.leaderNpid = owner.value().npid;
                 for (auto member = room->members.cbegin(); member != room->members.cend();
                      ++member) {
                     snapshot.members.append({member->userId, member->npid});
