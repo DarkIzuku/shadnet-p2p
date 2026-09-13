@@ -28,6 +28,7 @@ namespace WebApiRoutes {
 namespace {
 
 constexpr auto HostPlacementHeader = "X-ShadPS4-Bloodborne-Host-Placement";
+constexpr auto ClaimAcceptedHeader = "X-ShadPS4-Bloodborne-Claim-Accepted";
 
 QByteArray SummonEnvelopeBody(const QString& messageId) {
     QJsonObject body;
@@ -48,13 +49,18 @@ QByteArray SummonListBody(const QList<QByteArray>& signs) {
     return body;
 }
 
-QHttpServerResponse RawJsonResponse(const QByteArray& body, const QByteArray& hostPlacement = {}) {
+QHttpServerResponse RawJsonResponse(const QByteArray& body, const QByteArray& hostPlacement = {},
+                                    bool claimAccepted = false) {
     QHttpServerResponse response{"application/json", body, QHttpServerResponse::StatusCode::Ok};
-    if (!hostPlacement.isEmpty()) {
+    if (!hostPlacement.isEmpty() || claimAccepted) {
         QHttpHeaders headers = response.headers();
-        if (headers.append(HostPlacementHeader, hostPlacement)) {
-            response.setHeaders(std::move(headers));
+        if (!hostPlacement.isEmpty()) {
+            headers.append(HostPlacementHeader, hostPlacement);
         }
+        if (claimAccepted) {
+            headers.append(ClaimAcceptedHeader, "1");
+        }
+        response.setHeaders(std::move(headers));
     }
     return response;
 }
@@ -223,7 +229,7 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QStrin
                         << result.pendingHostPlacement.size();
                 TraceSummonPayload("create", "response", response, result.pendingHostPlacement,
                                    summonTrace);
-                return RawJsonResponse(response, result.pendingHostPlacement);
+                return RawJsonResponse(response, result.pendingHostPlacement, true);
             }
             if (!result.pendingHostPlacement.isEmpty()) {
                 qInfo() << "Bloodborne summon: preparing cross-map user"

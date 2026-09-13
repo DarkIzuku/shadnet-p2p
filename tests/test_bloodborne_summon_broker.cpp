@@ -416,35 +416,14 @@ int main() {
   CHECK(
       anywhere.Advertise(Parse(remoteAdvertisement), remoteAdvertisement, 9'000)
           .state == Bloodborne::SummonBroker::State::Advertised);
-  CHECK(anywhere.Search(Parse(search), 9'010, hostPlacement).isEmpty());
-  CHECK(anywhere.StateFor(QStringLiteral("remote-session"), 3000, 9'010) ==
-        Bloodborne::SummonBroker::State::Preparing);
-  const auto preparation = anywhere.Advertise(Parse(remoteAdvertisement),
-                                              remoteAdvertisement, 9'011);
-  CHECK(preparation.state == Bloodborne::SummonBroker::State::Preparing);
-  CHECK(preparation.pendingClaim.isEmpty());
-  CHECK(preparation.pendingHostPlacement == hostPlacement);
-
-  retained = anywhere.Consume(
-      Parse(QByteArray(
-          R"({"MessageId":"SummonDataRemoveRequest","SessionId":"remote-session","UserId":3000})")),
-      9'012);
-  CHECK(retained.consumed == 0);
-  CHECK(retained.retained == 1);
-  CHECK(retained.pendingHostPlacement == hostPlacement);
-
-  QByteArray destinationAdvertisementRaw = remoteAdvertisement;
-  destinationAdvertisementRaw.replace("\"AreaId\":111", "\"AreaId\":385941504");
-  const QJsonObject destinationAdvertisement =
-      Parse(destinationAdvertisementRaw);
-  const auto prepared = anywhere.Advertise(destinationAdvertisement,
-                                           destinationAdvertisementRaw, 9'013);
-  CHECK(prepared.state == Bloodborne::SummonBroker::State::Advertised);
-  CHECK(prepared.pendingClaim.isEmpty());
-
   const QList<QByteArray> remoteFound =
-      anywhere.Search(Parse(search), 9'014, hostPlacement);
+      anywhere.Search(Parse(search), 9'010, hostPlacement);
   CHECK(remoteFound.size() == 1);
+  CHECK(anywhere.StateFor(QStringLiteral("remote-session"), 3000, 9'010) ==
+        Bloodborne::SummonBroker::State::Advertised);
+  // The responder remains in the source world while claim, room join and
+  // signaling complete. The returned JSON is rewritten only for Bloodborne's
+  // matcher; no pre-match relocation or second bell advertisement is needed.
   CHECK(remoteFound.front().contains("\"CharaId\":9223372036854775808"));
   CHECK(remoteFound.front().contains("\"AreaId\":385875968"));
   CHECK(remoteFound.front().contains("\"AreaRegionId\":230100"));
@@ -465,14 +444,14 @@ int main() {
   CHECK(retained.consumed == 0);
   CHECK(retained.retained == 1);
   CHECK(retained.pendingHostPlacement == hostPlacement);
-  const auto destinationDelivery = anywhere.Advertise(
-      destinationAdvertisement, destinationAdvertisementRaw, 9'040);
-  CHECK(destinationDelivery.state ==
+  const auto sourceWorldDelivery = anywhere.Advertise(
+      Parse(remoteAdvertisement), remoteAdvertisement, 9'040);
+  CHECK(sourceWorldDelivery.state ==
         Bloodborne::SummonBroker::State::Delivered);
-  CHECK(destinationDelivery.pendingClaim == remoteClaim);
-  CHECK(destinationDelivery.pendingHostPlacement == hostPlacement);
+  CHECK(sourceWorldDelivery.pendingClaim == remoteClaim);
+  CHECK(sourceWorldDelivery.pendingHostPlacement == hostPlacement);
   const QByteArray remoteDeliveryResponse =
-      Bloodborne::BuildClaimDeliveryResponse(destinationDelivery.pendingClaim);
+      Bloodborne::BuildClaimDeliveryResponse(sourceWorldDelivery.pendingClaim);
   CHECK(remoteDeliveryResponse.contains(
       "\"HostData\":\"remote-host-owned-data\""));
   CHECK(!remoteDeliveryResponse.contains("\"SeamlessWarp\""));

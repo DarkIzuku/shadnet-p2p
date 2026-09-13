@@ -253,8 +253,10 @@ that is still set to `1`.
 ### Experimental seamless co-op
 
 Seamless mode lets the broker match bells from different maps and carries the
-host's placement to the guest so the client can move the guest before the normal
-room join. The persistent and recommended server setting is:
+host's placement to the guest as the final summon destination. The guest stays
+in its current world while the claim, Matching2 room join, and signaling are
+established; the matching client then performs at most one native cross-map
+reload. The persistent and recommended server setting is:
 
 ```ini
 [Bloodborne]

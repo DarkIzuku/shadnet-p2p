@@ -121,6 +121,49 @@ struct SearchMatchChecks {
     }
 };
 
+QString FirstRejectedMatchReason(const SearchMatchChecks& checks) {
+    if (!checks.differentUser)
+        return QStringLiteral("same_user");
+    if (!checks.differentSession)
+        return QStringLiteral("same_session");
+    if (!checks.version)
+        return QStringLiteral("version_mismatch");
+    if (!checks.method)
+        return QStringLiteral("summon_method_mismatch");
+    if (!checks.area)
+        return QStringLiteral("area_mismatch");
+    if (!checks.region)
+        return QStringLiteral("region_mismatch");
+    if (!checks.channel)
+        return QStringLiteral("channel_mismatch");
+    if (!checks.summonType)
+        return QStringLiteral("summon_type_mismatch");
+    if (!checks.password)
+        return QStringLiteral("password_mismatch");
+    if (!checks.level)
+        return QStringLiteral("level_mismatch");
+    if (!checks.distance)
+        return QStringLiteral("distance_mismatch");
+    return QStringLiteral("eligible");
+}
+
+void TraceSeamlessMatch(quint64 generation, const QJsonObject& request,
+                        const QJsonObject& candidate, SummonBroker::PeerRole role, bool eligible,
+                        bool returned, const QString& reason) {
+    qInfo().nospace().noquote() << "[BLOODBORNE SEAMLESS MATCH] generation=" << generation
+                                << " user=" << Integer(request, QStringLiteral("UserId"), -1)
+                                << " candidate_user="
+                                << Integer(candidate, QStringLiteral("UserId"), -1)
+                                << " area=" << Integer(candidate, QStringLiteral("AreaId"), -1)
+                                << " region="
+                                << Integer(candidate, QStringLiteral("AreaRegionId"), -1)
+                                << " role=" << SummonPeerRoleName(role) << " summon_type="
+                                << Integer(candidate, QStringLiteral("SummonType"), -1)
+                                << " eligible=" << (eligible ? "true" : "false")
+                                << " returned=" << (returned ? "true" : "false")
+                                << " reason=" << reason;
+}
+
 QSet<int> RequestedSummonTypes(const QJsonObject& request) {
     QSet<int> summonTypes;
     for (const QJsonValue& value : request.value(QStringLiteral("SummonTypeList")).toArray()) {
@@ -488,11 +531,9 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         it->preparationRequester = -1;
     }
     if (it->state == State::Claimed) {
-        const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
-        if (m_seamlessCoop && hostMap.has_value() &&
-            Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
-            return {State::Claimed, {}, it->hostPlacement};
-        }
+        // Single-load cross-map summons deliberately keep the responder in its source world
+        // until Matching2 and signaling are ready. Deliver the claim together with the stored
+        // host placement instead of requiring a pre-match warp and a second bell advertisement.
         it->state = State::Delivered;
     }
     if (it->state == State::Delivered) {
@@ -509,6 +550,8 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
     struct Candidate {
         qint64 updatedAtMs;
         QByteArray rawAdvertisement;
+        QJsonObject advertisement;
+        PeerRole role = PeerRole::Unknown;
     };
     std::vector<Candidate> candidates;
     const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
@@ -522,6 +565,7 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
     }
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
     const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
+    const quint64 searchGeneration = ++m_searchGeneration;
     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
         const SearchMatchChecks checks =
             EvaluateSearchMatch(request, it->advertisement, anywhereSummons, m_locationMode);
@@ -532,24 +576,40 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
                                                            anywhereSummons))
                                      .toJson(QJsonDocument::Compact);
         }
-        if (it->state == State::Advertised && checks.Matches()) {
+        const bool activeForRequester =
+            m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
+            Integer(it->claim, QStringLiteral("UserId"), -2) == requester;
+        const bool eligible = checks.Matches();
+        if ((it->state == State::Advertised || activeForRequester) && eligible) {
             if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
                 Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
-                it->state = State::Preparing;
+                // The placement is a deferred final summon destination. Do not hide the
+                // candidate and do not move the responder before claim/room/signaling.
                 it->hostPlacement = hostPlacement;
                 it->preparationRequester = requester;
                 it->updatedAtMs = nowMs;
-                continue;
             }
-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
-                                                       it->rawAdvertisement, it->advertisement,
-                                                       request, anywhereSummons)});
-        } else if (m_seamlessCoop && IsSeamlessActiveState(it->state) && requester >= 0 &&
-                   Integer(it->claim, QStringLiteral("UserId"), -2) == requester &&
-                   checks.Matches()) {
-            candidates.push_back({it->updatedAtMs, PrepareAdvertisementForSearch(
-                                                       it->rawAdvertisement, it->advertisement,
-                                                       request, anywhereSummons)});
+            candidates.push_back(
+                {it->updatedAtMs,
+                 PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
+                                               anywhereSummons),
+                 it->advertisement,
+                 PeerRoleForSummonType(
+                     Integer(it->advertisement, QStringLiteral("SummonType"), -1))});
+        } else if (m_trace && m_seamlessCoop) {
+            QString reason = FirstRejectedMatchReason(checks);
+            if (eligible) {
+                if (it->state == State::Consumed)
+                    reason = QStringLiteral("consumed");
+                else if (IsSeamlessActiveState(it->state))
+                    reason = QStringLiteral("active_claim_other_requester");
+                else
+                    reason = QStringLiteral("unavailable_state");
+            }
+            TraceSeamlessMatch(
+                searchGeneration, request, it->advertisement,
+                PeerRoleForSummonType(Integer(it->advertisement, QStringLiteral("SummonType"), -1)),
+                eligible, false, reason);
         }
     }
     std::sort(candidates.begin(), candidates.end(),
@@ -562,9 +622,17 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
     QList<QByteArray> results;
     for (const Candidate& candidate : candidates) {
         if (results.size() >= maxCount) {
-            break;
+            if (m_trace && m_seamlessCoop) {
+                TraceSeamlessMatch(searchGeneration, request, candidate.advertisement,
+                                   candidate.role, true, false, QStringLiteral("get_count_limit"));
+            }
+            continue;
         }
         results.append(candidate.rawAdvertisement);
+        if (m_trace && m_seamlessCoop) {
+            TraceSeamlessMatch(searchGeneration, request, candidate.advertisement, candidate.role,
+                               true, true, QStringLiteral("returned"));
+        }
     }
     return results;
 }

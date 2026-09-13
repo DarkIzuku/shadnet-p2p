@@ -94,6 +94,7 @@ private:
     bool m_seamlessAnywhereSummons;
     LocationMode m_locationMode;
     bool m_trace;
+    quint64 m_searchGeneration = 0;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
     QHash<qint64, SearchIntent> m_searchIntents;
