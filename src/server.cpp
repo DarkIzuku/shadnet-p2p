@@ -17,6 +17,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #endif
+#include "bloodborne_seamless_party.h"
 #include "database.h"
 #include "score_db.h"
 #include "server.h"
@@ -34,6 +35,9 @@ ShadNetServer::~ShadNetServer() {
 bool ShadNetServer::Start(ConfigManager* config) {
     m_config = config;
     m_shared.config = config;
+    Bloodborne::SeamlessPartyService::Options seamlessOptions;
+    seamlessOptions.enabled = config->IsBloodborneSeamlessCoopEnabled();
+    m_shared.seamlessParties = std::make_shared<Bloodborne::SeamlessPartyService>(seamlessOptions);
 
     m_dbPath = "db/shadnet.db";
     QDir().mkpath("db");
