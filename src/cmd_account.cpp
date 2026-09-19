@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include "account_registration.h"
+#include "bloodborne_seamless_party.h"
 #include "client_session.h"
 #include "proto_utils.h"
 #include "shadnet.pb.h"
@@ -163,6 +164,8 @@ ErrorType ClientSession::CmdLogin(StreamExtractor& data, QByteArray& reply) {
 
     // Count this authenticated session in live usage stats
     m_shared->UsageOnLogin();
+    if (m_shared->seamlessParties)
+        m_shared->seamlessParties->MarkConnected(user.userId, QDateTime::currentMSecsSinceEpoch());
 
     // Notify online friends we came online -- unless Appear-Offline is set, in which case
     // we stay invisible (handled as offline by everyone else).

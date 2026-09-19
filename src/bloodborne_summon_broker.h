@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QMutex>
+#include <QSet>
 #include <QString>
 
 namespace Bloodborne {
@@ -16,8 +17,9 @@ namespace Bloodborne {
 class SummonBroker {
 public:
     enum class State { Advertised, Preparing, Claimed, Delivered, Consumed };
-    enum class ClaimStatus { Claimed, AlreadyClaimed, NotFound, Conflict };
+    enum class ClaimStatus { Claimed, AlreadyClaimed, NotFound, Conflict, RoleMismatch };
     enum class LocationMode { Vanilla, SameRegion, SameArea };
+    enum class PeerRole { Unknown, Host, Cooperator, Invader };
 
     struct Options {
         qint64 ttlMs = 130'000;
@@ -32,17 +34,24 @@ public:
         State state = State::Advertised;
         QByteArray pendingClaim;
         QByteArray pendingHostPlacement;
+        QByteArray advertiserPlacement;
+        quint64 placementGeneration = 0;
+        qint64 placementRequester = -1;
     };
 
     struct ClaimResult {
         ClaimStatus status = ClaimStatus::NotFound;
         QString targetSessionId;
         qint64 targetUserId = -1;
+        qint64 summonType = -1;
+        PeerRole peerRole = PeerRole::Unknown;
+        quint64 placementGeneration = 0;
     };
 
     struct ConsumeResult {
         int consumed = 0;
         int retained = 0;
+        int pvpConsumed = 0;
         QByteArray pendingHostPlacement;
     };
 
@@ -50,7 +59,8 @@ public:
     explicit SummonBroker(qint64 ttlMs);
     explicit SummonBroker(Options options);
 
-    AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs);
+    AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs,
+                              const QByteArray& advertiserPlacement = {});
     QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
                              const QByteArray& hostPlacement = {});
     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
@@ -58,6 +68,7 @@ public:
     ConsumeResult Consume(const QJsonObject& request, qint64 nowMs);
 
     std::optional<State> StateFor(const QString& sessionId, qint64 userId, qint64 nowMs);
+    PeerRole RoleForUser(qint64 userId, qint64 nowMs);
     int Size(qint64 nowMs);
     bool IsSeamlessCoopEnabled() const;
     bool IsSeamlessAnywhereSummonsEnabled() const;
@@ -71,7 +82,16 @@ private:
         QJsonObject claim;
         QByteArray rawClaim;
         QByteArray hostPlacement;
+        QByteArray advertiserPlacement;
+        qint64 placementRequester = -1;
+        QString placementTargetSession;
+        quint64 placementGeneration = 0;
         qint64 preparationRequester = -1;
+        qint64 updatedAtMs = 0;
+    };
+
+    struct SearchIntent {
+        QSet<int> summonTypes;
         qint64 updatedAtMs = 0;
     };
 
@@ -83,12 +103,18 @@ private:
     bool m_seamlessAnywhereSummons;
     LocationMode m_locationMode;
     bool m_trace;
+    quint64 m_searchGeneration = 0;
+    quint64 m_placementGeneration = 0;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
+    QHash<qint64, SearchIntent> m_searchIntents;
 };
 
 SummonBroker::LocationMode ParseSummonLocationMode(const QString& value, bool* valid = nullptr);
 QString SummonLocationModeName(SummonBroker::LocationMode mode);
+SummonBroker::PeerRole PeerRoleForSummonType(qint64 summonType);
+QString SummonPeerRoleName(SummonBroker::PeerRole role);
+QString SummonModeName(const QJsonObject& request);
 bool HasRequiredAdvertisementFields(const QJsonObject& body);
 QByteArray BuildClaimDeliveryResponse(const QByteArray& rawClaim);
 

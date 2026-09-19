@@ -62,6 +62,7 @@ enum class CommandType : uint16_t {
     GetUserInfoList = 113,
     GetRoomMemberDataExternalList = 114,
     SendRoomMessage = 115,
+    SeamlessControl = 116,
 };
 
 // Notification type IDs (u16 LE in Notification packet header).
@@ -80,6 +81,7 @@ enum class NotificationType : uint16_t {
     // ClientSession::BuildWebApiPushPayload): npServiceName, npServiceLabel(u32 LE),
     // dataType, data, fromNpid, toNpid.
     WebApiPushEvent = 17,
+    SeamlessControl = 18,
 };
 
 // Error codes for Reply packets

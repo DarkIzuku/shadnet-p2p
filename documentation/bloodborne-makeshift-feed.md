@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright 2026 shadNet Project -->
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+
 # Bloodborne Makeshift Altar and activity feed
 
 ## Makeshift Altar phase 1

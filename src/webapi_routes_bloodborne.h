@@ -5,10 +5,12 @@
 class QHttpServer;
 class Database;
 class QString;
+struct SharedState;
 
 namespace WebApiRoutes {
 
 void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QString& locationMode,
-                              bool summonTrace, Database* websiteMetricsDatabase = nullptr);
+                              bool summonTrace, SharedState& shared,
+                              Database* websiteMetricsDatabase = nullptr);
 
 } // namespace WebApiRoutes
