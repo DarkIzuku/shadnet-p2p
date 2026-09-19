@@ -34,6 +34,9 @@ public:
         State state = State::Advertised;
         QByteArray pendingClaim;
         QByteArray pendingHostPlacement;
+        QByteArray advertiserPlacement;
+        quint64 placementGeneration = 0;
+        qint64 placementRequester = -1;
     };
 
     struct ClaimResult {
@@ -42,6 +45,7 @@ public:
         qint64 targetUserId = -1;
         qint64 summonType = -1;
         PeerRole peerRole = PeerRole::Unknown;
+        quint64 placementGeneration = 0;
     };
 
     struct ConsumeResult {
@@ -55,7 +59,8 @@ public:
     explicit SummonBroker(qint64 ttlMs);
     explicit SummonBroker(Options options);
 
-    AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs);
+    AdvertiseResult Advertise(const QJsonObject& body, const QByteArray& rawBody, qint64 nowMs,
+                              const QByteArray& advertiserPlacement = {});
     QList<QByteArray> Search(const QJsonObject& request, qint64 nowMs,
                              const QByteArray& hostPlacement = {});
     ClaimResult Claim(const QJsonObject& request, const QByteArray& rawRequest, qint64 nowMs,
@@ -77,6 +82,10 @@ private:
         QJsonObject claim;
         QByteArray rawClaim;
         QByteArray hostPlacement;
+        QByteArray advertiserPlacement;
+        qint64 placementRequester = -1;
+        QString placementTargetSession;
+        quint64 placementGeneration = 0;
         qint64 preparationRequester = -1;
         qint64 updatedAtMs = 0;
     };
@@ -95,6 +104,7 @@ private:
     LocationMode m_locationMode;
     bool m_trace;
     quint64 m_searchGeneration = 0;
+    quint64 m_placementGeneration = 0;
     QMutex m_mutex;
     QHash<QString, Record> m_records;
     QHash<qint64, SearchIntent> m_searchIntents;

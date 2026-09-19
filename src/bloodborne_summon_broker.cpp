@@ -503,7 +503,8 @@ SummonBroker::SummonBroker(Options options)
       m_locationMode(options.locationMode), m_trace(options.trace) {}
 
 SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
-                                                      const QByteArray& rawBody, qint64 nowMs) {
+                                                      const QByteArray& rawBody, qint64 nowMs,
+                                                      const QByteArray& advertiserPlacement) {
     QMutexLocker lock(&m_mutex);
     PurgeExpiredLocked(nowMs);
 
@@ -514,18 +515,29 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         record.state = State::Advertised;
         record.advertisement = body;
         record.rawAdvertisement = rawBody;
+        if (!advertiserPlacement.isEmpty() && advertiserPlacement.size() <= MaxHostPlacementSize &&
+            !advertiserPlacement.contains('\r') && !advertiserPlacement.contains('\n')) {
+            record.advertiserPlacement = advertiserPlacement;
+        }
         record.updatedAtMs = nowMs;
+        const QByteArray storedAdvertiserPlacement = record.advertiserPlacement;
         m_records.insert(key, std::move(record));
-        return {State::Advertised, {}, {}};
+        return {State::Advertised, {}, {}, storedAdvertiserPlacement, 0, -1};
     }
 
     it->advertisement = body;
     it->rawAdvertisement = rawBody;
+    if (!advertiserPlacement.isEmpty() && advertiserPlacement.size() <= MaxHostPlacementSize &&
+        !advertiserPlacement.contains('\r') && !advertiserPlacement.contains('\n')) {
+        it->advertiserPlacement = advertiserPlacement;
+    }
     it->updatedAtMs = nowMs;
     if (it->state == State::Preparing) {
         const std::optional<qint64> hostMap = HostPlacementMap(it->hostPlacement);
         if (hostMap.has_value() && Integer(body, QStringLiteral("AreaId"), -1) != *hostMap) {
-            return {State::Preparing, {}, it->hostPlacement};
+            return {State::Preparing,        {},
+                    it->hostPlacement,       it->advertiserPlacement,
+                    it->placementGeneration, it->placementRequester};
         }
         it->state = State::Advertised;
         it->preparationRequester = -1;
@@ -537,9 +549,16 @@ SummonBroker::AdvertiseResult SummonBroker::Advertise(const QJsonObject& body,
         it->state = State::Delivered;
     }
     if (it->state == State::Delivered) {
-        return {State::Delivered, it->rawClaim, it->hostPlacement};
+        return {State::Delivered,        it->rawClaim,
+                it->hostPlacement,       it->advertiserPlacement,
+                it->placementGeneration, it->placementRequester};
     }
-    return {it->state, {}, {}};
+    return {it->state,
+            {},
+            {},
+            it->advertiserPlacement,
+            it->placementGeneration,
+            it->placementRequester};
 }
 
 QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
@@ -564,7 +583,9 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
         intent.updatedAtMs = nowMs;
     }
     const bool anywhereSummons = m_seamlessCoop && m_seamlessAnywhereSummons;
-    const std::optional<qint64> hostMap = HostPlacementMap(hostPlacement);
+    // A searcher's current position is not stored on an advertisement. Only the exact claim binds
+    // the host/requester destination to the selected responder session.
+    (void)hostPlacement;
     const quint64 searchGeneration = ++m_searchGeneration;
     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
         const SearchMatchChecks checks =
@@ -581,14 +602,6 @@ QList<QByteArray> SummonBroker::Search(const QJsonObject& request, qint64 nowMs,
             Integer(it->claim, QStringLiteral("UserId"), -2) == requester;
         const bool eligible = checks.Matches();
         if ((it->state == State::Advertised || activeForRequester) && eligible) {
-            if (anywhereSummons && hostMap.has_value() && requester >= 0 &&
-                Integer(it->advertisement, QStringLiteral("AreaId"), -1) != *hostMap) {
-                // The placement is a deferred final summon destination. Do not hide the
-                // candidate and do not move the responder before claim/room/signaling.
-                it->hostPlacement = hostPlacement;
-                it->preparationRequester = requester;
-                it->updatedAtMs = nowMs;
-            }
             candidates.push_back(
                 {it->updatedAtMs,
                  PrepareAdvertisementForSearch(it->rawAdvertisement, it->advertisement, request,
@@ -707,10 +720,17 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
         hostPlacement.size() <= MaxHostPlacementSize && !hostPlacement.contains('\r') &&
         !hostPlacement.contains('\n')) {
         target->hostPlacement = hostPlacement;
+        target->placementRequester = requester;
+        target->placementTargetSession = result.targetSessionId;
+        target->placementGeneration = ++m_placementGeneration;
     } else {
         target->hostPlacement.clear();
+        target->placementRequester = -1;
+        target->placementTargetSession.clear();
+        target->placementGeneration = 0;
     }
     target->updatedAtMs = nowMs;
+    result.placementGeneration = target->placementGeneration;
     result.status = ClaimStatus::Claimed;
     return result;
 }
@@ -751,6 +771,11 @@ SummonBroker::ConsumeResult SummonBroker::Consume(const QJsonObject& request, qi
                 continue;
             }
             it->state = State::Consumed;
+            it->hostPlacement.clear();
+            it->advertiserPlacement.clear();
+            it->placementRequester = -1;
+            it->placementTargetSession.clear();
+            it->placementGeneration = 0;
             ++result.consumed;
             if (role == PeerRole::Invader)
                 ++result.pvpConsumed;

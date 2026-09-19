@@ -28,6 +28,7 @@ namespace WebApiRoutes {
 namespace {
 
 constexpr auto HostPlacementHeader = "X-ShadPS4-Bloodborne-Host-Placement";
+constexpr auto AdvertiserPlacementHeader = "X-ShadPS4-Bloodborne-Advertiser-Placement";
 constexpr auto ClaimAcceptedHeader = "X-ShadPS4-Bloodborne-Claim-Accepted";
 
 QByteArray SummonEnvelopeBody(const QString& messageId) {
@@ -210,7 +211,17 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QStrin
                 return InvalidRequest(QStringLiteral("Invalid summon advertisement"));
             }
             const auto result =
-                broker->Advertise(*body, request.body(), QDateTime::currentMSecsSinceEpoch());
+                broker->Advertise(*body, request.body(), QDateTime::currentMSecsSinceEpoch(),
+                                  request.value(AdvertiserPlacementHeader));
+            if (!result.advertiserPlacement.isEmpty()) {
+                qInfo().nospace().noquote()
+                    << "[BLOODBORNE SEAMLESS PLACEMENT] "
+                       "state=AdvertiserPlacementStoredByServer user="
+                    << Integer(*body, QStringLiteral("UserId"))
+                    << " session=" << body->value(QStringLiteral("SessionId")).toString()
+                    << " bytes=" << result.advertiserPlacement.size()
+                    << " usage=responder_source_only";
+            }
             if (websiteMetricsDatabase != nullptr) {
                 websiteMetricsDatabase->RecordBloodborneWebsiteEvent(
                     Integer(*body, QStringLiteral("UserId")),
@@ -227,6 +238,17 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QStrin
                         << body->value(QStringLiteral("SessionId")).toString() << "mode"
                         << Bloodborne::SummonModeName(*body) << "host-placement-bytes"
                         << result.pendingHostPlacement.size();
+                if (!result.pendingHostPlacement.isEmpty()) {
+                    qInfo().nospace().noquote()
+                        << "[BLOODBORNE SEAMLESS PLACEMENT] "
+                           "state=CandidatePlacementReturned requester="
+                        << result.placementRequester
+                        << " candidate=" << Integer(*body, QStringLiteral("UserId"))
+                        << " candidate_session="
+                        << body->value(QStringLiteral("SessionId")).toString()
+                        << " generation=" << result.placementGeneration
+                        << " bytes=" << result.pendingHostPlacement.size() << " source=host_claim";
+                }
                 TraceSummonPayload("create", "response", response, result.pendingHostPlacement,
                                    summonTrace);
                 return RawJsonResponse(response, result.pendingHostPlacement, true);
@@ -243,6 +265,14 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QStrin
                     << "] state=HostPlacementReturned user_id="
                     << Integer(*body, QStringLiteral("UserId"))
                     << " bytes=" << result.pendingHostPlacement.size();
+                qInfo().nospace().noquote()
+                    << "[BLOODBORNE SEAMLESS PLACEMENT] "
+                       "state=CandidatePlacementReturned requester="
+                    << result.placementRequester
+                    << " candidate=" << Integer(*body, QStringLiteral("UserId"))
+                    << " candidate_session=" << body->value(QStringLiteral("SessionId")).toString()
+                    << " generation=" << result.placementGeneration
+                    << " bytes=" << result.pendingHostPlacement.size() << " source=host_claim";
                 const QByteArray response =
                     SummonEnvelopeBody(QStringLiteral("SummonDataCreateResponse"));
                 TraceSummonPayload("create", "response", response, result.pendingHostPlacement,
@@ -268,11 +298,11 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QStrin
                    }
                    const QByteArray hostPlacement = request.value(HostPlacementHeader);
                    if (!hostPlacement.isEmpty()) {
-                       qInfo().nospace().noquote()
-                           << "[BLOODBORNE SEAMLESS SUMMON] state=HostPlacementReceivedByServer "
-                              "user_id="
-                           << Integer(*body, QStringLiteral("UserId"))
-                           << " bytes=" << hostPlacement.size();
+                       qInfo().nospace().noquote() << "[BLOODBORNE SEAMLESS PLACEMENT] "
+                                                      "state=SearcherPlacementObservedNotStored "
+                                                      "user_id="
+                                                   << Integer(*body, QStringLiteral("UserId"))
+                                                   << " bytes=" << hostPlacement.size();
                    }
                    const QList<QByteArray> signs =
                        broker->Search(*body, QDateTime::currentMSecsSinceEpoch(), hostPlacement);
@@ -348,6 +378,14 @@ void RegisterBloodborneRoutes(QHttpServer& http, bool seamlessCoop, const QStrin
                                        : QStringLiteral("coop"))
                                << "role" << Bloodborne::SummonPeerRoleName(result.peerRole)
                                << "summon_type" << result.summonType;
+                       qInfo().nospace().noquote()
+                           << "[BLOODBORNE SEAMLESS PLACEMENT] "
+                              "state=HostDestinationBoundByClaim requester="
+                           << Integer(*body, QStringLiteral("UserId"))
+                           << " candidate=" << result.targetUserId
+                           << " candidate_session=" << result.targetSessionId
+                           << " generation=" << result.placementGeneration
+                           << " bytes=" << request.value(HostPlacementHeader).size();
                        if (result.peerRole == Bloodborne::SummonBroker::PeerRole::Invader) {
                            qInfo().nospace().noquote()
                                << "[BLOODBORNE SEAMLESS PVP] state=TargetClaimed target_user_id="

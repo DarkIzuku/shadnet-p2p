@@ -58,6 +58,10 @@ int main() {
       R"({"MessageId":"SummonDataRemoveRequest","SessionId":"guest-session","UserId":2465,"Force":true})";
   const QByteArray hostPlacement =
       "1,17010000,43110000,c2e80000,42800000,c016cbe4,-241109";
+  const QByteArray advertiserPlacement =
+      "1,15000000,42000000,42100000,42200000,3f800000,210000";
+  const QByteArray unrelatedSearcherPlacement =
+      "1,1c000000,43000000,43100000,43200000,40000000,280010";
   const QByteArray unrelatedSearch =
       R"({"MessageId":"SummonDataGetListRequest","SessionId":"other-session","UserId":2467,"AreaId":385875968,"AreaRegionId":230100,"ChannelId":0,"MatchingLevel":46,"SummonDataVersion":3,"SummonMethod":0,"SummonTypeList":[{"SummonType":0}],"SummonWord":null,"DistanceThreshold":100,"GetMaxCount":20,"PosX":143,"PosY":-116,"PosZ":-87})";
 
@@ -413,11 +417,13 @@ int main() {
   CHECK(!validMode);
 
   Bloodborne::SummonBroker anywhere(seamlessOptions);
-  CHECK(
-      anywhere.Advertise(Parse(remoteAdvertisement), remoteAdvertisement, 9'000)
-          .state == Bloodborne::SummonBroker::State::Advertised);
+  const auto remoteAdvertised =
+      anywhere.Advertise(Parse(remoteAdvertisement), remoteAdvertisement, 9'000,
+                         advertiserPlacement);
+  CHECK(remoteAdvertised.state == Bloodborne::SummonBroker::State::Advertised);
+  CHECK(remoteAdvertised.advertiserPlacement == advertiserPlacement);
   const QList<QByteArray> remoteFound =
-      anywhere.Search(Parse(search), 9'010, hostPlacement);
+      anywhere.Search(Parse(search), 9'010, unrelatedSearcherPlacement);
   CHECK(remoteFound.size() == 1);
   CHECK(anywhere.StateFor(QStringLiteral("remote-session"), 3000, 9'010) ==
         Bloodborne::SummonBroker::State::Advertised);
@@ -435,8 +441,10 @@ int main() {
   CHECK(!remoteFound.front().contains("\"AreaId\":111"));
   CHECK(!remoteFound.front().contains("\"PosX\":999"));
 
-  CHECK(anywhere.Claim(Parse(remoteClaim), remoteClaim, 9'020, hostPlacement)
-            .status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  const auto remoteClaimed =
+      anywhere.Claim(Parse(remoteClaim), remoteClaim, 9'020, hostPlacement);
+  CHECK(remoteClaimed.status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(remoteClaimed.placementGeneration != 0);
   retained = anywhere.Consume(
       Parse(QByteArray(
           R"({"MessageId":"SummonDataRemoveRequest","SessionId":"remote-session","UserId":3000})")),
@@ -450,6 +458,11 @@ int main() {
         Bloodborne::SummonBroker::State::Delivered);
   CHECK(sourceWorldDelivery.pendingClaim == remoteClaim);
   CHECK(sourceWorldDelivery.pendingHostPlacement == hostPlacement);
+  CHECK(sourceWorldDelivery.pendingHostPlacement != unrelatedSearcherPlacement);
+  CHECK(sourceWorldDelivery.pendingHostPlacement != advertiserPlacement);
+  CHECK(sourceWorldDelivery.advertiserPlacement == advertiserPlacement);
+  CHECK(sourceWorldDelivery.placementGeneration ==
+        remoteClaimed.placementGeneration);
   const QByteArray remoteDeliveryResponse =
       Bloodborne::BuildClaimDeliveryResponse(sourceWorldDelivery.pendingClaim);
   CHECK(remoteDeliveryResponse.contains(
