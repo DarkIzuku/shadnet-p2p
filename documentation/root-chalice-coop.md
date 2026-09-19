@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright 2026 shadNet Project -->
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+
 # Root Chalice co-op investigation
 
 ## Current boundary
