@@ -503,8 +503,7 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
             return result;
         }
 
-        const qint64 previousRequester =
-            Integer(target->claim, QStringLiteral("UserId"), -1);
+        const qint64 previousRequester = Integer(target->claim, QStringLiteral("UserId"), -1);
         const qint64 requester = Integer(request, QStringLiteral("UserId"), -1);
         if (!m_seamlessCoop || requester < 0 || previousRequester != requester) {
             result.status = ClaimStatus::Conflict;
