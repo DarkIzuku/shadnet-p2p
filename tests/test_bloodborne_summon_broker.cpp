@@ -50,6 +50,8 @@ int main() {
       R"({"MessageId":"SummonDataSummonRequest","SessionId":"remote-session","UserId":2466,"TargetUserId":3000,"TargetCharaId":9223372036854775808,"HostData":"remote-host-owned-data","ResKind":99})";
   const QByteArray conflictingClaim =
       R"({"MessageId":"SummonDataSummonRequest","SessionId":"guest-session","UserId":2467,"TargetUserId":2465})";
+  const QByteArray sameRequesterRetryClaim =
+      R"({"MessageId":"SummonDataSummonRequest","SessionId":"fresh-host-session","UserId":2466,"TargetUserId":2465,"TargetCharaId":9223372036854775808,"HostData":"retry-host-data"})";
   const QByteArray targetUserClaim =
       R"({"MessageId":"SummonDataSummonRequest","SessionId":"host-owned-session","UserId":2466,"TargetUserId":2465,"TargetCharaId":9223372036854775808})";
   const QByteArray removal =
@@ -171,6 +173,21 @@ int main() {
   Bloodborne::SummonBroker seamless(seamlessOptions);
   CHECK(seamless.IsSeamlessCoopEnabled());
   CHECK(seamless.IsSeamlessAnywhereSummonsEnabled());
+
+  Bloodborne::SummonBroker seamlessRetry(seamlessOptions);
+  CHECK(seamlessRetry.Advertise(Parse(advertisement), advertisement, 190).state ==
+        Bloodborne::SummonBroker::State::Advertised);
+  CHECK(seamlessRetry.Claim(Parse(claim), claim, 191).status ==
+        Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  CHECK(seamlessRetry.Claim(Parse(sameRequesterRetryClaim), sameRequesterRetryClaim, 192).status ==
+        Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  const auto retryDelivery =
+      seamlessRetry.Advertise(Parse(advertisement), advertisement, 193);
+  CHECK(retryDelivery.state == Bloodborne::SummonBroker::State::Delivered);
+  CHECK(retryDelivery.pendingClaim == sameRequesterRetryClaim);
+  CHECK(seamlessRetry.Claim(Parse(conflictingClaim), conflictingClaim, 194).status ==
+        Bloodborne::SummonBroker::ClaimStatus::Conflict);
+
   CHECK(seamless.Advertise(Parse(advertisement), advertisement, 200).state ==
         Bloodborne::SummonBroker::State::Advertised);
   CHECK(seamless.Claim(Parse(claim), claim, 210).status ==
