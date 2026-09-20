@@ -708,12 +708,25 @@ SummonBroker::ClaimResult SummonBroker::Claim(const QJsonObject& request,
         return result;
     }
     if (target->state == State::Claimed || target->state == State::Delivered) {
-        result.status =
-            target->claim == request ? ClaimStatus::AlreadyClaimed : ClaimStatus::Conflict;
-        return result;
+        if (target->claim == request) {
+            result.status = ClaimStatus::AlreadyClaimed;
+            return result;
+        }
+
+        const qint64 previousRequester = Integer(target->claim, QStringLiteral("UserId"), -1);
+        if (!m_seamlessCoop || requester < 0 || previousRequester != requester) {
+            result.status = ClaimStatus::Conflict;
+            return result;
+        }
+
+        // A failed seamless handshake can leave the advertiser claimed while the
+        // same Beckoning-Bell requester starts a fresh native session. Treat that
+        // as a retry by the same owner, never as permission for another requester.
+        target->state = State::Claimed;
+    } else {
+        target->state = State::Claimed;
     }
 
-    target->state = State::Claimed;
     target->claim = request;
     target->rawClaim = rawRequest;
     if (m_seamlessCoop && !hostPlacement.isEmpty() &&
