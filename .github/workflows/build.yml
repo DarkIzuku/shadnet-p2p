@@ -214,90 +214,9 @@ jobs:
         name: shadnet-win64-${{ needs.get-info.outputs.date }}-${{ needs.get-info.outputs.shorthash }}
         path: staging/
 
-  linux:
-    if: ${{ !startsWith(github.head_ref || github.ref_name, 'codex/chalice-') && !startsWith(github.head_ref || github.ref_name, 'codex/root-chalice-') && !startsWith(github.head_ref || github.ref_name, 'bloodborne-seamless-') }}
-    runs-on: ubuntu-24.04
-    needs: [get-info, get-qt-version]
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Add LLVM repository
-      run: |
-        wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-        sudo add-apt-repository 'deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main'
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          ninja-build mold \
-          clang-19 \
-          qt6-base-dev libqt6sql6-sqlite
-
-    - name: Install Qt6 ${{ needs.get-qt-version.outputs.version }}
-      uses: jurplel/install-qt-action@v4
-      with:
-        version: ${{ needs.get-qt-version.outputs.version }}
-        host: 'linux'
-        target: 'desktop'
-        modules: 'qthttpserver qtwebsockets'
-        cache: true
-
-    - name: Cache CMake configuration
-      uses: actions/cache@v4
-      env:
-        cache-name: ${{ runner.os }}-cmake-config
-      with:
-        path: ${{ github.workspace }}/build
-        key: ${{ env.cache-name }}-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
-        restore-keys: ${{ env.cache-name }}-
-
-    - name: Cache CMake build
-      uses: hendrikmuhs/ccache-action@v1.2.21
-      env:
-        cache-name: ${{ runner.os }}-cmake-build
-      with:
-        append-timestamp: false
-        key: ${{ env.cache-name }}-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
-
-    - name: Configure CMake
-      run: >
-        cmake --fresh -G Ninja
-        -B ${{ github.workspace }}/build
-        -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
-        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON
-        -DCMAKE_C_COMPILER=clang-19
-        -DCMAKE_CXX_COMPILER=clang++-19
-        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold"
-        -DCMAKE_C_COMPILER_LAUNCHER=ccache
-        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-    - name: Build
-      run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --parallel $(nproc)
-
-    - name: Build and run tests
-      run: |
-        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target test_bloodborne_summon_broker test_bloodborne_bootstrap test_bloodborne_online_service test_bloodborne_chalice_service test_bloodborne_reference_proxy test_server_logger test_bloodborne_website --parallel $(nproc)
-        ctest --test-dir ${{ github.workspace }}/build --output-on-failure
-
-    - name: Package
-      run: |
-        mkdir -p staging
-        cp build/shadnet build/worlds.cfg build/scoreboards.cfg staging/
-        cp -a build/web staging/web
-        tar czf shadnet-linux64.tar.gz -C staging .
-
-    - name: Upload Linux artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: shadnet-linux64-${{ needs.get-info.outputs.date }}-${{ needs.get-info.outputs.shorthash }}
-        path: shadnet-linux64.tar.gz
-
   pre-release:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [get-info, windows, linux]
+    needs: [get-info, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # required to create releases and upload assets
