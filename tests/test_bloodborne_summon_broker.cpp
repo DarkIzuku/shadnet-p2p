@@ -179,18 +179,21 @@ int main() {
   CHECK(seamless.IsSeamlessAnywhereSummonsEnabled());
 
   Bloodborne::SummonBroker seamlessRetry(seamlessOptions);
-  CHECK(seamlessRetry.Advertise(Parse(advertisement), advertisement, 190).state ==
-        Bloodborne::SummonBroker::State::Advertised);
-  CHECK(seamlessRetry.Claim(Parse(claim), claim, 191).status ==
-        Bloodborne::SummonBroker::ClaimStatus::Claimed);
-  CHECK(seamlessRetry.Claim(Parse(sameRequesterRetryClaim), sameRequesterRetryClaim, 192).status ==
-        Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  const auto retryAdvertised =
+      seamlessRetry.Advertise(Parse(advertisement), advertisement, 190);
+  CHECK(retryAdvertised.state == Bloodborne::SummonBroker::State::Advertised);
+  const auto retryClaimed = seamlessRetry.Claim(Parse(claim), claim, 191);
+  CHECK(retryClaimed.status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
+  const auto sameRequesterRetry =
+      seamlessRetry.Claim(Parse(sameRequesterRetryClaim), sameRequesterRetryClaim, 192);
+  CHECK(sameRequesterRetry.status == Bloodborne::SummonBroker::ClaimStatus::Claimed);
   const auto retryDelivery =
       seamlessRetry.Advertise(Parse(advertisement), advertisement, 193);
   CHECK(retryDelivery.state == Bloodborne::SummonBroker::State::Delivered);
   CHECK(retryDelivery.pendingClaim == sameRequesterRetryClaim);
-  CHECK(seamlessRetry.Claim(Parse(conflictingClaim), conflictingClaim, 194).status ==
-        Bloodborne::SummonBroker::ClaimStatus::Conflict);
+  const auto competingRetry =
+      seamlessRetry.Claim(Parse(conflictingClaim), conflictingClaim, 194);
+  CHECK(competingRetry.status == Bloodborne::SummonBroker::ClaimStatus::Conflict);
 
   CHECK(seamless.Advertise(Parse(advertisement), advertisement, 200).state ==
         Bloodborne::SummonBroker::State::Advertised);
