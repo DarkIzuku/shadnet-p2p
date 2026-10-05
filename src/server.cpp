@@ -314,19 +314,24 @@ bool ShadNetServer::LoadWorldsCfg(const QString& path) {
     return true;
 }
 
-static void SetAggressiveKeepalive(QTcpSocket* socket) {
+static void SetResilientKeepalive(QTcpSocket* socket) {
+    // shadNet's control TCP connection can be idle for minutes while gameplay traffic continues
+    // over UDP/STUN and WebAPI. A 60s keepalive was too aggressive for some VPN/overlay networks
+    // and could tear down otherwise healthy sessions. Keep dead-peer detection, but make it
+    // tolerant enough for real gameplay.
     socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
+    socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
 #ifdef Q_OS_WIN
     struct tcp_keepalive ka;
     ka.onoff = 1;
-    ka.keepalivetime = 60000;    // 60s idle before first probe
-    ka.keepaliveinterval = 5000; // 5s between probes (3 probes = ~75s total)
+    ka.keepalivetime = 300000;    // 5 minutes idle before first probe
+    ka.keepaliveinterval = 15000; // 15s between probes
     DWORD bytes = 0;
     WSAIoctl(static_cast<SOCKET>(socket->socketDescriptor()), SIO_KEEPALIVE_VALS, &ka, sizeof(ka),
              nullptr, 0, &bytes, nullptr, nullptr);
 #else
     int fd = socket->socketDescriptor();
-    int idle = 60, interval = 5, count = 3;
+    int idle = 300, interval = 15, count = 5;
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
@@ -334,7 +339,7 @@ static void SetAggressiveKeepalive(QTcpSocket* socket) {
 }
 
 void ShadNetServer::SpawnSession(QTcpSocket* socket, bool isSsl) {
-    SetAggressiveKeepalive(socket);
+    SetResilientKeepalive(socket);
     QThread* thread = new QThread;
     ClientSession* session = new ClientSession(socket, &m_shared, m_dbPath, isSsl);
     session->moveToThread(thread);
